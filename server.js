@@ -12,7 +12,11 @@ app.use(express.json());
 
 // Pull MongoDB connection string from Render environment variable
 const uri = process.env.ATLAS_URI;
-mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+// Connect to MongoDB without deprecated options
+mongoose.connect(uri)
+  .then(() => console.log("MongoDB database connection established successfully"))
+  .catch(err => console.error("MongoDB connection error:", err));
 
 const connection = mongoose.connection;
 connection.once('open', () => {
