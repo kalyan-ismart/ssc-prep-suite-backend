@@ -23,6 +23,19 @@ connection.once('open', () => {
   console.log("MongoDB database connection established successfully");
 });
 
+// Add root route to handle "Cannot GET /" error
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'SSC Prep Suite Backend API is running!',
+    status: 'success',
+    endpoints: {
+      modules: '/modules',
+      users: '/users', 
+      progress: '/progress'
+    }
+  });
+});
+
 // Routes
 const modulesRouter = require('./routes/modules');
 const progressRouter = require('./routes/progress');
