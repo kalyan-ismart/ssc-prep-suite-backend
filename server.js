@@ -1,3 +1,6 @@
+// server.js
+
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -7,131 +10,122 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const winston = require('winston');
 const expressWinston = require('express-winston');
-
-require("dotenv").config();
+const apiRoutes = require('./routes'); // Centralized API routes
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Security and performance middleware
+// --- Middleware Setup ---
+
+// CORS configuration to allow frontend origin
+const corsOptions = {
+  origin: ['https://sarkarisuccess.netlify.app'], // Replace with your frontend URL
+  credentials: true,
+};
+app.use(cors(corsOptions));
+
+// Security, compression, and body parsing
 app.use(helmet());
 app.use(compression());
-app.use(cors());
 app.use(express.json());
-app.use(morgan('dev'));
 
-// Advanced logging (Winston)
-const logger = winston.createLogger({
-  transports: [
-    new winston.transports.File({ filename: 'combined.log' }),
-    new winston.transports.Console()
-  ]
-});
-app.use(expressWinston.logger({
-  winstonInstance: logger,
-  meta: true,
-  msg: "HTTP {{req.method}} {{req.url}}",
-  expressFormat: true,
-  colorize: false,
-}));
+// HTTP request logger
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('dev'));
+}
 
-// Rate limiting
+// Advanced logging with Winston for production
+if (process.env.NODE_ENV === 'production') {
+  const logger = winston.createLogger({
+    transports: [
+      new winston.transports.File({ filename: 'combined.log' }),
+      new winston.transports.Console()
+    ]
+  });
+  app.use(expressWinston.logger({
+    winstonInstance: logger,
+    meta: true,
+    msg: 'HTTP {{req.method}} {{req.url}}',
+    expressFormat: true,
+    colorize: false
+  }));
+}
+
+// Rate limiting to prevent abuse
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Max 100 requests per IP per windowMs
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use(limiter);
 
-// MongoDB connection
+
+// --- Database Connection ---
+
 const uri = process.env.ATLAS_URI;
 if (!uri) {
-  throw new Error('ATLAS_URI is not defined in environment variables');
+  console.error('FATAL ERROR: ATLAS_URI is not defined in environment variables.');
+  process.exit(1); // Exit if no database connection string
 }
-mongoose.connect(uri)
-  .then(() => console.log("MongoDB database connection established successfully"))
-  .catch(err => console.error("MongoDB connection error:", err));
 
-const connection = mongoose.connection;
-connection.once('open', () => {
-  console.log("SarkariSuccess-Hub Backend API connected to MongoDB successfully");
+mongoose.connect(uri)
+  .then(() => console.log('MongoDB connected successfully'))
+  .catch(err => {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  });
+
+mongoose.connection.on('error', err => {
+  console.error('MongoDB runtime error:', err);
 });
 
-// Root route
+
+// --- API Routes ---
+
+// Base/Health Check Route
 app.get('/', (req, res) => {
   res.json({
-    message: 'SarkariSuccess-Hub Backend API is running!',
-    status: 'success',
+    success: true,
+    message: 'SarkariSuccess-Hub API is running!',
     platform: 'Comprehensive Government Exam Preparation Hub',
-    version: '2.0.0',
-    endpoints: {
-      tools: '/tools',
-      categories: '/categories',
-      users: '/users',
-      progress: '/progress',
-      analytics: '/analytics',
-      quizzes: '/quizzes',
-      goals: '/goals',
-      examSchedule: '/exam-schedule'
-    }
+    version: '2.0',
   });
 });
 
-// Enhanced Routes for SarkariSuccess-Hub
-const toolsRouter = require('./routes/tools');
-const categoriesRouter = require('./routes/categories');
-const usersRouter = require('./routes/users');
-const progressRouter = require('./routes/progress');
-const analyticsRouter = require('./routes/analytics');
+// Register all API routes
+app.use(apiRoutes);
 
-// Ensure these files exist, even as placeholders:
-const quizzesRouter = require('./routes/quizzes');
-const goalsRouter = require('./routes/goals');
-const examScheduleRouter = require('./routes/examSchedule');
 
-// API Routes
-app.use('/tools', toolsRouter);
-app.use('/categories', categoriesRouter);
-app.use('/users', usersRouter);
-app.use('/progress', progressRouter);
-app.use('/analytics', analyticsRouter);
-app.use('/quizzes', quizzesRouter);
-app.use('/goals', goalsRouter);
-app.use('/exam-schedule', examScheduleRouter);
+// --- Error Handling Middleware ---
 
-// Legacy support for existing modules endpoint (backward compatibility)
-const modulesRouter = require('./routes/modules');
-app.use('/modules', modulesRouter);
+// 404 handler for unmatched routes
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found. Please check the API documentation for valid endpoints.',
+  });
+});
 
-// Error handling middleware
+// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
-    message: 'Something went wrong!',
-    error: process.env.NODE_ENV === 'production' ? {} : err.message
-  });
-  // NOTE: Do not call next() after sending response
-});
-
-// 404 handler (Express 5.x compatible)
-app.use((req, res) => {
-  res.status(404).json({
-    message: 'Route not found',
-    availableEndpoints: [
-      '/tools', '/categories', '/users', '/progress', 
-      '/analytics', '/quizzes', '/goals', '/exam-schedule'
-    ]
+    success: false,
+    message: 'An unexpected error occurred on the server.',
+    error: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message
   });
 });
 
-// Listen on correct host and port
+
+// --- Server Activation ---
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`SarkariSuccess-Hub Backend is running on port: ${PORT}`);
+    console.log(`SarkariSuccess-Hub API running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   });
 }
 
-// Export app for testing
+// Export app for testing purposes
 module.exports = app;

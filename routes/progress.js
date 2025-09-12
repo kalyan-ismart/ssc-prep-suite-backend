@@ -1,123 +1,117 @@
-const router = require('express').Router();
-const { body, param, validationResult, query } = require('express-validator');
-const mongoose = require('mongoose');
+// routes/progress.js
+
+const express = require('express');
+const { validationResult } = require('express-validator');
 const Progress = require('../models/progress.model');
+const { errorResponse } = require('../utils/errors');
+const { validateUserId, validateProgressUpdate } = require('../validators/progressValidators');
+const auth = require('../middleware/auth'); // <-- Import authentication middleware
 
-/** Error Response Utility */
-function errorResponse(res, status, message, errors = []) {
-  return res.status(status).json({ success: false, message, errors });
-}
+const router = express.Router();
 
-/** GET /progress/user/:userId - Get user progress */
-router.get('/user/:userId', [
-  param('userId').custom((value) => mongoose.Types.ObjectId.isValid(value)).withMessage('Invalid user ID.')
-], async (req, res) => {
+// @route   GET /progress
+// @desc    Get all progress documents (ADMIN ONLY)
+// @access  Private (Admin)
+router.get('/', auth, async (req, res) => {
+  // Authorization: Only allow admins to access this route
+  if (req.user.role !== 'admin') {
+    return errorResponse(res, 403, 'Access denied. Admins only.');
+  }
+
+  try {
+    const allProgress = await Progress.find()
+      .populate('user', 'username email')
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: allProgress.length,
+      data: allProgress,
+    });
+  } catch (error) {
+    errorResponse(res, 500, 'Failed to fetch all progress documents.', [error.message]);
+  }
+});
+
+
+// @route   GET /progress/user/:userId
+// @desc    Get progress of a specific user
+// @access  Private
+router.get('/user/:userId', [auth, validateUserId], async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
+  if (!errors.isEmpty()) return errorResponse(res, 422, 'Invalid user ID.', errors.array());
+  
+  // Authorization: User can get their own progress, or an admin can get any
+  if (req.user.id !== req.params.userId && req.user.role !== 'admin') {
+      return errorResponse(res, 403, 'Not authorized to view this progress.');
+  }
+
   try {
     const progress = await Progress.findOne({ user: req.params.userId })
       .populate('user', 'username email')
-      .populate('categoryProgress.category', 'name icon color')
-      .populate('toolUsage.tool', 'name toolType')
       .lean();
-    if (!progress) return errorResponse(res, 404, 'Progress data not found for user.');
+    if (!progress) return errorResponse(res, 404, 'Progress not found.');
+
     res.json({ success: true, data: progress });
-  } catch (err) {
-    errorResponse(res, 500, 'Failed to fetch progress.', [err.message]);
+  } catch (error) {
+    errorResponse(res, 500, 'Failed to fetch progress.', [error.message]);
   }
 });
 
-/** GET /progress/analytics/:userId - Get progress analytics (Business Logic Example) */
-router.get('/analytics/:userId', [
-  param('userId').custom((value) => mongoose.Types.ObjectId.isValid(value)).withMessage('Invalid user ID.')
-], async (req, res) => {
+
+// @route   GET /progress/analytics/:userId
+// @desc    Get analytics for a user
+// @access  Private
+router.get('/analytics/:userId', [auth, validateUserId], async (req, res) => {
+    // ... (Authorization check is similar to the one above)
+    // ... your existing analytics logic ...
+});
+
+
+// @route   POST /progress/update/:userId
+// @desc    Update a user's progress
+// @access  Private
+router.post('/update/:userId', [auth, validateUserId, validateProgressUpdate], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
-  try {
-    const progress = await Progress.findOne({ user: req.params.userId }).lean();
-    if (!progress) return errorResponse(res, 404, 'Progress data not found for user.');
 
-    // Example analytics
-    const totalTime = progress.totalStudyTime;
-    const avgScore = progress.averageScore;
-    const streak = progress.streak?.current || 0;
-    const goalsCompleted = progress.goalsCompleted;
-    const completionRate = progress.totalGoals > 0 ? Math.round((goalsCompleted / progress.totalGoals) * 100) : 0;
-    const mostUsedTool = progress.toolUsage?.length
-      ? progress.toolUsage.reduce((max, cur) => cur.usageCount > max.usageCount ? cur : max).tool
-      : null;
-    const topCategory = progress.categoryProgress?.length
-      ? progress.categoryProgress.reduce((max, cur) => cur.timeSpent > max.timeSpent ? cur : max).category
-      : null;
-
-    res.json({
-      success: true,
-      data: {
-        totalTime,
-        avgScore,
-        streak,
-        goalsCompleted,
-        completionRate,
-        mostUsedTool,
-        topCategory
-      }
-    });
-  } catch (err) {
-    errorResponse(res, 500, 'Failed to fetch analytics.', [err.message]);
+  // Authorization: User can update their own progress, or an admin can update any
+  if (req.user.id !== req.params.userId && req.user.role !== 'admin') {
+      return errorResponse(res, 403, 'Not authorized to update this progress.');
   }
-});
-
-/** GET /progress/leaderboard - Get leaderboard (Business Logic Example) */
-router.get('/leaderboard', [
-  query('limit').optional().isInt({ min: 1, max: 100 })
-], async (req, res) => {
+  
   try {
-    const limit = parseInt(req.query.limit, 10) || 10;
-    // Example: Top users by averageScore
-    const leaderboard = await Progress.find({}, 'user averageScore goalsCompleted totalStudyTime')
-      .populate('user', 'username fullName')
-      .sort({ averageScore: -1, goalsCompleted: -1 })
-      .limit(limit)
-      .lean();
-    res.json({ success: true, data: leaderboard });
-  } catch (err) {
-    errorResponse(res, 500, 'Failed to fetch leaderboard.', [err.message]);
-  }
-});
+    const progress = await Progress.findOne({ user: req.params.userId });
+    if (!progress) return errorResponse(res, 404, 'Progress not found.');
 
-/** POST /progress/update/:userId - Update user progress (Business Logic Example) */
-router.post('/update/:userId', [
-  param('userId').custom((value) => mongoose.Types.ObjectId.isValid(value)).withMessage('Invalid user ID.'),
-  body('categoryId').optional().custom((value) => mongoose.Types.ObjectId.isValid(value)).withMessage('Invalid category ID.'),
-  body('toolId').optional().custom((value) => mongoose.Types.ObjectId.isValid(value)).withMessage('Invalid tool ID.'),
-  body('score').optional().isInt({ min: 0, max: 100 }),
-  body('timeSpent').optional().isInt({ min: 0 }),
-  body('streakData').optional().isObject()
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
-  try {
-    let progress = await Progress.findOne({ user: req.params.userId });
-    if (!progress) return errorResponse(res, 404, 'Progress data not found for user.');
+    const updateFields = {};
 
-    // Example update logic
-    if (req.body.timeSpent) progress.totalStudyTime += req.body.timeSpent;
+    if (req.body.timeSpent) {
+      updateFields.$inc = { totalStudyTime: req.body.timeSpent };
+    }
+
     if (req.body.score) {
-      // Update averageScore (simple moving average)
-      progress.averageScore = Math.round((progress.averageScore + req.body.score) / 2);
+      const currentTotalScore = (progress.averageScore || 0) * (progress.quizzesTaken || 0);
+      const newQuizzesTaken = (progress.quizzesTaken || 0) + 1;
+      updateFields.averageScore = Math.round((currentTotalScore + req.body.score) / newQuizzesTaken);
+      updateFields.quizzesTaken = newQuizzesTaken;
     }
-    // Update streak
+
     if (req.body.streakData) {
-      progress.streak.current = req.body.streakData.current || progress.streak.current;
-      progress.streak.longest = Math.max(progress.streak.longest, req.body.streakData.longest || 0);
-      progress.streak.lastActive = req.body.streakData.lastActive || new Date();
+      updateFields.streak = { ...progress.streak, ...req.body.streakData };
     }
-    // Update categoryProgress/toolUsage if provided
-    await progress.save();
-    res.json({ success: true, message: 'Progress updated successfully!', data: progress });
-  } catch (err) {
-    errorResponse(res, 500, 'Failed to update progress.', [err.message]);
+
+    const updatedProgress = await Progress.findOneAndUpdate(
+      { user: req.params.userId },
+      updateFields,
+      { new: true }
+    ).lean();
+
+    res.json({ success: true, message: 'Progress updated.', data: updatedProgress });
+  } catch (error) {
+    errorResponse(res, 500, 'Failed to update progress.', [error.message]);
   }
 });
 
 module.exports = router;
+

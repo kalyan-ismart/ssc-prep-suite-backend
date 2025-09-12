@@ -1,28 +1,29 @@
 // models/tool.model.js
-
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
 /**
  * Tool Schema for SarkariSuccess-Hub
- * Supports categories, tool types, tags, usage tracking, and ratings.
+ * Supports categories, types, tags, usage tracking.
  */
 const toolSchema = new Schema({
   name: {
     type: String,
     required: true,
     trim: true,
-    maxlength: 100
+    maxlength: 100,
+    unique: true, // Implicitly creates an index
   },
   description: {
     type: String,
     required: true,
-    maxlength: 500
+    maxlength: 500,
   },
   category: {
     type: Schema.Types.ObjectId,
     ref: 'Category',
-    required: true
+    required: true,
+    index: true, // Field-level index
   },
   toolType: {
     type: String,
@@ -38,47 +39,44 @@ const toolSchema = new Schema({
       'practice',
       'assessment',
       'utility',
-      'interactive'
+      'interactive',
     ],
-    required: true
+    required: true,
+    index: true, // Field-level index
   },
   icon: {
     type: String,
-    default: '🔧'
+    default: '🔧',
   },
   isActive: {
     type: Boolean,
-    default: true
+    default: true,
+    index: true, // Field-level index
   },
   settings: {
     type: Schema.Types.Mixed,
-    default: {}
+    default: {},
   },
   tags: [
     {
       type: String,
-      maxlength: 30
-    }
+      maxlength: 30,
+      index: true, // Field-level index
+    },
   ],
   usageCount: {
     type: Number,
-    default: 0
+    default: 0,
   },
   rating: {
     type: Number,
     min: 0,
     max: 5,
-    default: 0
-  }
+    default: 0,
+  },
 }, {
-  timestamps: true
+  timestamps: true,
 });
 
-// Indexes for performance
-toolSchema.index({ name: 1 });
-toolSchema.index({ category: 1 });
-toolSchema.index({ toolType: 1 });
-toolSchema.index({ isActive: 1 });
-toolSchema.index({ tags: 1 });
-
+// No explicit schema.index() calls needed, as indexes are defined at the field level
 module.exports = mongoose.model('Tool', toolSchema);
