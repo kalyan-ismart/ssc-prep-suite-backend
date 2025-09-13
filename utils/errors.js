@@ -1,91 +1,46 @@
-// validators/progressValidators.js
-
-const { body, param, validationResult } = require('express-validator');
-const mongoose = require('mongoose');
+// utils/errors.js
 
 /**
- * Middleware to check validation results
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
+ * A utility function to wrap async route handlers and catch errors.
+ * This avoids the need for try-catch blocks in every async route.
  */
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array(),
-    });
-  }
-  next();
+const asyncHandler = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
+/**
+ * A standardized function for sending error responses.
+ */
+const errorResponse = (res, statusCode, message, errors = []) => {
+  return res.status(statusCode).json({
+    success: false,
+    message,
+    errors,
+  });
 };
 
 /**
- * Validator for userId (used in GET /user/:userId and GET /analytics/:userId)
+ * A specific handler for Mongoose/database related errors.
  */
-const validateUserId = [
-  param('userId')
-    .isMongoId()
-    .withMessage('Valid user ID (MongoDB ObjectId) is required'),
-  validate
-];
+const handleDatabaseError = (res, err) => {
+  console.error(err); // Log the full error for debugging
 
-/**
- * Validators for updating progress (POST /update/:userId)
- */
-const validateProgressUpdate = [
-  param('userId')
-    .isMongoId()
-    .withMessage('Valid user ID (MongoDB ObjectId) is required'),
-  body('timeSpent')
-    .optional()
-    .isInt({ min: 0, max: 1440 })
-    .withMessage('Time spent must be a non-negative integer between 0-1440 minutes'),
-  body('score')
-    .optional()
-    .isFloat({ min: 0, max: 100 })
-    .withMessage('Score must be a number between 0 and 100'),
-  body('streakData')
-    .optional()
-    .isObject()
-    .withMessage('Streak data must be an object'),
-  body('streakData.currentStreak')
-    .optional()
-    .isInt({ min: 0 })
-    .withMessage('Current streak must be a non-negative integer'),
-  body('streakData.longestStreak')
-    .optional()
-    .isInt({ min: 0 })
-    .withMessage('Longest streak must be a non-negative integer'),
-  body('streakData.lastStudyDate')
-    .optional()
-    .isISO8601()
-    .withMessage('Last study date must be a valid ISO date'),
-  validate
-];
+  if (err.name === 'ValidationError') {
+    const messages = Object.values(err.errors).map(val => val.message);
+    return errorResponse(res, 400, 'Validation Error', messages);
+  }
 
-/**
- * Validators for analytics query parameters
- */
-const validateAnalyticsQuery = [
-  param('userId')
-    .isMongoId()
-    .withMessage('Valid user ID (MongoDB ObjectId) is required'),
-  body('timeRange')
-    .optional()
-    .isIn(['7days', '30days', '90days', '1year'])
-    .withMessage('Time range must be one of: 7days, 30days, 90days, 1year'),
-  body('metrics')
-    .optional()
-    .isArray()
-    .withMessage('Metrics must be an array'),
-  validate
-];
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue)[0];
+    const value = err.keyValue[field];
+    return errorResponse(res, 409, `Duplicate key error: ${field} '${value}' already exists.`);
+  }
 
+  return errorResponse(res, 500, 'Server Error');
+};
+
+// Export all the utility functions
 module.exports = {
-  validate,
-  validateUserId,
-  validateProgressUpdate,
-  validateAnalyticsQuery,
+  asyncHandler,
+  errorResponse,
+  handleDatabaseError,
 };
