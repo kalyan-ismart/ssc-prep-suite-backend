@@ -1,5 +1,3 @@
-// server.js
-
 require('dotenv').config();
 
 // Validate critical environment variables at startup
@@ -30,6 +28,7 @@ const fs = require('fs');
 const apiRoutes = require('./routes'); // Centralized API routes
 
 const app = express();
+
 const PORT = process.env.PORT || 10000;
 
 // Create logs directory if it doesn't exist
@@ -74,7 +73,6 @@ app.use(helmet({
     },
   },
 }));
-
 app.use(compression());
 
 // Request size limits
@@ -129,7 +127,6 @@ app.use('/api/', limiter); // Apply rate limiter to all API routes
 
 const connectDB = async () => {
   const uri = process.env.ATLAS_URI;
-  
   const options = {
     maxPoolSize: 10, // Maintain up to 10 socket connections
     serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
@@ -141,20 +138,20 @@ const connectDB = async () => {
   try {
     await mongoose.connect(uri, options);
     console.log('MongoDB connected successfully');
-    
+
     // Log database connection events
     mongoose.connection.on('connected', () => {
       console.log('Mongoose connected to MongoDB');
     });
-    
+
     mongoose.connection.on('error', (err) => {
       console.error('MongoDB runtime error:', err);
     });
-    
+
     mongoose.connection.on('disconnected', () => {
       console.log('Mongoose disconnected from MongoDB');
     });
-    
+
   } catch (err) {
     console.error('MongoDB connection error:', err);
     // Retry connection after 5 seconds
@@ -196,7 +193,7 @@ app.get('/health', async (req, res) => {
     // Check database connection
     const dbState = mongoose.connection.readyState;
     const dbStatus = dbState === 1 ? 'connected' : 'disconnected';
-    
+
     res.json({
       success: true,
       status: 'healthy',
@@ -252,8 +249,8 @@ app.use((err, req, res, next) => {
 
   res.status(err.status || 500).json({
     success: false,
-    message: process.env.NODE_ENV === 'production' 
-      ? 'An unexpected error occurred on the server.' 
+    message: process.env.NODE_ENV === 'production'
+      ? 'An unexpected error occurred on the server.'
       : err.message,
     ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
     timestamp: new Date().toISOString()

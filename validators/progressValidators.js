@@ -1,7 +1,4 @@
-// validators/progressValidators.js
-
 const { body, param, validationResult } = require('express-validator');
-const mongoose = require('mongoose');
 
 /**
  * Middleware to check validation results
@@ -28,7 +25,7 @@ const validateUserId = [
   param('userId')
     .isMongoId()
     .withMessage('Valid user ID (MongoDB ObjectId) is required'),
-  validate
+  validate,
 ];
 
 /**
@@ -62,7 +59,7 @@ const validateProgressUpdate = [
     .optional()
     .isISO8601()
     .withMessage('Last study date must be a valid ISO date'),
-  validate
+  validate,
 ];
 
 /**
@@ -80,7 +77,7 @@ const validateAnalyticsQuery = [
     .optional()
     .isArray()
     .withMessage('Metrics must be an array'),
-  validate
+  validate,
 ];
 
 module.exports = {
