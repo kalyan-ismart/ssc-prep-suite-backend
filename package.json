@@ -1,45 +1,61 @@
+// utils/package.json
+
 {
   "name": "sarkarisuccess-hub",
   "version": "2.0.0",
-  "description": "Comprehensive Government Exam Preparation Platform - Backend API",
+  "description": "Comprehensive Government Exam Preparation Hub API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "seed": "node scripts/seedData.js",
-    "lint": "eslint .",
-    "test": "jest"
+    "test": "jest --watchAll --verbose",
+    "test:ci": "jest --ci --coverage",
+    "lint": "eslint . --ext .js",
+    "lint:fix": "eslint . --ext .js --fix"
+  },
+  "keywords": [
+    "government-exams",
+    "ssc",
+    "banking",
+    "education",
+    "api",
+    "nodejs",
+    "express",
+    "mongodb"
+  ],
+  "author": "SarkariSuccess Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "express-validator": "^7.0.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "compression": "^1.7.4",
+    "morgan": "^1.10.0",
+    "express-rate-limit": "^6.10.0",
+    "winston": "^3.10.0",
+    "express-winston": "^4.2.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "jest": "^29.6.2",
+    "supertest": "^6.3.3",
+    "eslint": "^8.47.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kalyan-ismart/sarkarisuccess-hub-backend.git"
+    "url": "https://github.com/your-username/sarkarisuccess-hub.git"
   },
-  "author": "SarkariSuccess Team",
-  "license": "MIT",
-  "type": "commonjs",
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "compression": "^1.7.4",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "express-rate-limit": "^7.3.1",
-    "express-validator": "^7.1.0",
-    "express-winston": "^4.2.0",
-    "helmet": "^7.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.4.1",
-    "morgan": "^1.10.0",
-    "openai": "^4.51.0",
-    "winston": "^3.13.0"
+  "bugs": {
+    "url": "https://github.com/your-username/sarkarisuccess-hub/issues"
   },
-  "devDependencies": {
-    "eslint": "^8.57.0",
-    "jest": "^29.7.0",
-    "nodemon": "^3.1.2",
-    "supertest": "^7.0.0"
-  },
-  "engines": {
-    "node": "18.x || 20.x"
-  }
+  "homepage": "https://sarkarisuccess.netlify.app"
 }
