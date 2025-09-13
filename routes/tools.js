@@ -1,5 +1,3 @@
-// routes/tools.js
-
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const Tool = require('../models/tool.model');
@@ -8,7 +6,7 @@ const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation middlewares for create/update
+// Validation middleware for create/update
 const validateTool = [
   body('name')
     .isString()
@@ -42,6 +40,7 @@ const validateTool = [
     .withMessage('Tags must be an array'),
 ];
 
+// Validation middleware for query parameters
 const validateToolQuery = [
   query('category')
     .optional()
@@ -68,7 +67,7 @@ const validateToolQuery = [
   query('active')
     .optional()
     .isBoolean()
-    .withMessage('Active must be a boolean')
+    .withMessage('Active must be a boolean'),
 ];
 
 // GET tools list (with optional filters and pagination)
@@ -85,8 +84,6 @@ router.get('/', [optionalAuth, ...validateToolQuery], asyncHandler(async (req, r
     const skip = (page - 1) * limit;
 
     const filter = {};
-    
-    // Build filter
     if (category) filter.category = category;
     if (type) filter.toolType = type;
     if (active !== undefined) filter.isActive = active;
@@ -98,7 +95,7 @@ router.get('/', [optionalAuth, ...validateToolQuery], asyncHandler(async (req, r
       ];
     }
 
-    // Default to active tools only for non-admin users
+    // Non-admins only see active tools by default
     if (!req.user || req.user.role !== 'admin') {
       filter.isActive = true;
     }
@@ -110,29 +107,22 @@ router.get('/', [optionalAuth, ...validateToolQuery], asyncHandler(async (req, r
         .limit(limit)
         .sort({ createdAt: -1 })
         .lean(),
-      Tool.countDocuments(filter)
+      Tool.countDocuments(filter),
     ]);
 
     const totalPages = Math.ceil(total / limit);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1
-      }
+      pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
     });
   } catch (err) {
     return handleDatabaseError(res, err);
   }
 }));
 
-// GET tool by ID
+// GET single tool by ID
 router.get('/:id', [
   optionalAuth,
   param('id').isMongoId().withMessage('Valid tool ID is required'),
@@ -144,8 +134,6 @@ router.get('/:id', [
 
   try {
     const filter = { _id: req.params.id };
-    
-    // Non-admin users can only see active tools
     if (!req.user || req.user.role !== 'admin') {
       filter.isActive = true;
     }
@@ -172,20 +160,16 @@ router.post('/add', [auth, adminAuth, ...validateTool], asyncHandler(async (req,
   }
 
   try {
-    // Check for duplicate name
     const existing = await Tool.findOne({ name: req.body.name });
     if (existing) {
       return errorResponse(res, 409, 'Tool name already exists.');
     }
 
-    // Add creator information
-    const toolData = {
+    const tool = new Tool({
       ...req.body,
       createdBy: req.user.id,
-      createdAt: new Date()
-    };
-
-    const tool = new Tool(toolData);
+      createdAt: new Date(),
+    });
     await tool.save();
 
     const populatedTool = await Tool.findById(tool._id)
@@ -193,17 +177,13 @@ router.post('/add', [auth, adminAuth, ...validateTool], asyncHandler(async (req,
       .populate('createdBy', 'username fullName')
       .lean();
 
-    res.status(201).json({ 
-      success: true, 
-      message: 'Tool added successfully.', 
-      data: populatedTool 
-    });
+    res.status(201).json({ success: true, message: 'Tool added successfully.', data: populatedTool });
   } catch (err) {
     return handleDatabaseError(res, err);
   }
 }));
 
-// POST update tool by ID (Admin only or tool creator)
+// POST update tool by ID (Admin or creator)
 router.post('/update/:id', [
   auth,
   param('id').isMongoId().withMessage('Valid tool ID is required'),
@@ -220,42 +200,30 @@ router.post('/update/:id', [
       return errorResponse(res, 404, 'Tool not found.');
     }
 
-    // Check ownership - only admin or tool creator can update
-    if (req.user.role !== 'admin' && tool.createdBy?.toString() !== req.user.id) {
+    // Only admin or creator may update
+    if (req.user.role !== 'admin' && tool.createdBy.toString() !== req.user.id) {
       return errorResponse(res, 403, 'You can only update tools you created.');
     }
 
-    // Check for duplicate name if changing
     if (req.body.name && req.body.name !== tool.name) {
-      const existing = await Tool.findOne({ name: req.body.name });
-      if (existing) {
+      const dup = await Tool.findOne({ name: req.body.name });
+      if (dup) {
         return errorResponse(res, 409, 'Tool name already exists.');
       }
     }
 
-    // Update fields
     const updateData = { ...req.body, updatedAt: new Date() };
-    
-    // Only admin can change certain fields
     if (req.user.role !== 'admin') {
       delete updateData.isActive;
       delete updateData.category;
     }
 
-    const updatedTool = await Tool.findByIdAndUpdate(
-      req.params.id,
-      { $set: updateData },
-      { new: true, runValidators: true }
-    )
+    const updatedTool = await Tool.findByIdAndUpdate(req.params.id, { $set: updateData }, { new: true, runValidators: true })
       .populate('category', 'name icon color')
       .populate('createdBy', 'username fullName')
       .lean();
 
-    res.json({ 
-      success: true, 
-      message: 'Tool updated successfully.', 
-      data: updatedTool 
-    });
+    res.json({ success: true, message: 'Tool updated successfully.', data: updatedTool });
   } catch (err) {
     return handleDatabaseError(res, err);
   }
@@ -263,7 +231,7 @@ router.post('/update/:id', [
 
 // DELETE tool by ID (Admin only)
 router.delete('/:id', [
-  auth, 
+  auth,
   adminAuth,
   param('id').isMongoId().withMessage('Valid tool ID is required'),
 ], asyncHandler(async (req, res) => {
@@ -279,15 +247,10 @@ router.delete('/:id', [
     }
 
     await Tool.findByIdAndDelete(req.params.id);
-
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Tool deleted successfully.',
-      deletedTool: {
-        id: tool._id,
-        name: tool.name,
-        deletedAt: new Date().toISOString()
-      }
+      deletedTool: { id: tool._id, name: tool.name, deletedAt: new Date().toISOString() },
     });
   } catch (err) {
     return handleDatabaseError(res, err);
@@ -319,11 +282,7 @@ router.post('/:id/toggle', [
       .populate('category', 'name icon color')
       .lean();
 
-    res.json({ 
-      success: true, 
-      message: `Tool ${tool.isActive ? 'activated' : 'deactivated'} successfully.`,
-      data: populatedTool
-    });
+    res.json({ success: true, message: `Tool ${tool.isActive ? 'activated' : 'deactivated'} successfully.`, data: populatedTool });
   } catch (err) {
     return handleDatabaseError(res, err);
   }

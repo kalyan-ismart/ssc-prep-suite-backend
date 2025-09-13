@@ -1,113 +1,130 @@
+// routes/categories.js
+
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const Category = require('../models/category.model');
-const { errorResponse } = require('../utils/errors');
+const Tool = require('../models/tool.model');
+const { errorResponse, handleDatabaseError, asyncHandler } = require('../utils/errors');
+const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation middlewares
+// Validation middleware
 const validateCategory = [
-  body('name').isString().trim().isLength({ min: 2, max: 50 }),
-  body('description').isString().trim().isLength({ min: 5, max: 200 }),
-  body('icon').isString().trim(),
-  body('color').isString().matches(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/),
-  body('order').optional().isInt({ min: 0 }),
-  body('isActive').optional().isBoolean(),
+  body('name').isString().trim().isLength({ min: 1, max: 100 }).withMessage('Name must be 1-100 characters'),
+  body('description').optional().isString().trim().isLength({ max: 500 }),
+  body('icon').optional().isString().trim().isLength({ max: 5 }).withMessage('Icon must be a single emoji or text'),
 ];
 
-// GET categories list
-router.get('/', async (req, res) => {
+// GET all categories
+// Public read
+router.get('/', optionalAuth, asyncHandler(async (req, res) => {
   try {
-    const categories = await Category.find().sort({ order: 1 }).lean();
+    const categories = await Category.find().lean();
     res.json({ success: true, data: categories });
-  } catch (error) {
-    console.error(error); // Log the error for debugging
-    errorResponse(res, 500, 'Failed to fetch categories.', [error.message]);
+  } catch (err) {
+    return handleDatabaseError(res, err);
   }
-});
+}));
 
-// POST add new category
-router.post('/add', validateCategory, async (req, res) => {
+// GET single category by ID
+// Public read
+router.get('/:id', optionalAuth, [
+  param('id').isMongoId().withMessage('Valid category ID is required')
+], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return errorResponse(res, 422, 'Validation failed.', errors.array());
-  }
-
-  try {
-    const exists = await Category.findOne({ name: req.body.name });
-    if (exists) return errorResponse(res, 409, 'Category name already exists.');
-
-    const category = new Category(req.body);
-    await category.save();
-    res.status(201).json({ success: true, message: 'Category added.', data: category });
-  } catch (error) {
-    console.error(error); // Log the error for debugging
-    errorResponse(res, 500, 'Failed to add category.', [error.message]);
-  }
-});
-
-// GET category by ID
-router.get('/:id', [
-  param('id').isMongoId(),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return errorResponse(res, 422, 'Invalid ID.', errors.array());
-  }
+  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
 
   try {
     const category = await Category.findById(req.params.id).lean();
     if (!category) return errorResponse(res, 404, 'Category not found.');
     res.json({ success: true, data: category });
-  } catch (error) {
-    console.error(error); // Log the error for debugging
-    errorResponse(res, 500, 'Failed to fetch category.', [error.message]);
+  } catch (err) {
+    return handleDatabaseError(res, err);
   }
-});
+}));
 
-// DELETE category by ID
-router.delete('/:id', [
-  param('id').isMongoId(),
-], async (req, res) => {
+// GET all tools for a category
+// Public read
+router.get('/:id/tools', optionalAuth, [
+  param('id').isMongoId().withMessage('Valid category ID is required')
+], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return errorResponse(res, 422, 'Invalid ID.', errors.array());
-  }
+  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
 
   try {
-    const result = await Category.findByIdAndDelete(req.params.id).lean();
-    if (!result) return errorResponse(res, 404, 'Category not found or already deleted.');
-    res.json({ success: true, message: 'Category deleted.' });
-  } catch (error) {
-    console.error(error); // Log the error for debugging
-    errorResponse(res, 500, 'Failed to delete category.', [error.message]);
+    const tools = await Tool.find({ category: req.params.id, isActive: true })
+      .select('-settings')
+      .lean();
+    res.json({ success: true, data: tools });
+  } catch (err) {
+    return handleDatabaseError(res, err);
   }
-});
+}));
 
-// POST update category
-router.post('/update/:id', [
-  param('id').isMongoId(),
-  ...validateCategory.map((validation) => validation.optional()),
-], async (req, res) => {
+// POST add category (Admin only)
+router.post('/add', [auth, adminAuth, ...validateCategory], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return errorResponse(res, 422, 'Validation failed.', errors.array());
+  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
+
+  try {
+    const existing = await Category.findOne({ name: req.body.name });
+    if (existing) return errorResponse(res, 409, 'Category name already exists.');
+
+    const category = new Category({
+      name: req.body.name,
+      description: req.body.description || '',
+      icon: req.body.icon || ''
+    });
+    await category.save();
+    res.status(201).json({ success: true, data: category });
+  } catch (err) {
+    return handleDatabaseError(res, err);
   }
+}));
+
+// PUT update category (Admin only)
+router.put('/update/:id', [auth, adminAuth,
+  param('id').isMongoId().withMessage('Valid category ID is required'),
+  ...validateCategory.map(v => v.optional({ nullable: true }))
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
 
   try {
     const category = await Category.findById(req.params.id);
     if (!category) return errorResponse(res, 404, 'Category not found.');
 
-    Object.entries(req.body).forEach(([key, value]) => {
-      if (value !== undefined) category[key] = value;
-    });
+    if (req.body.name && req.body.name !== category.name) {
+      const dup = await Category.findOne({ name: req.body.name });
+      if (dup) return errorResponse(res, 409, 'Category name already exists.');
+    }
 
+    Object.entries(req.body).forEach(([key, val]) => {
+      if (val !== undefined) category[key] = val;
+    });
     await category.save();
-    res.json({ success: true, message: 'Category updated.', data: category });
-  } catch (error) {
-    console.error(error); // Log the error for debugging
-    errorResponse(res, 500, 'Failed to update category.', [error.message]);
+
+    res.json({ success: true, data: category });
+  } catch (err) {
+    return handleDatabaseError(res, err);
   }
-});
+}));
+
+// DELETE category (Admin only)
+router.delete('/:id', [auth, adminAuth,
+  param('id').isMongoId().withMessage('Valid category ID is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed.', errors.array());
+
+  try {
+    const category = await Category.findByIdAndDelete(req.params.id).lean();
+    if (!category) return errorResponse(res, 404, 'Category not found.');
+    res.json({ success: true, message: 'Category deleted successfully.' });
+  } catch (err) {
+    return handleDatabaseError(res, err);
+  }
+}));
 
 module.exports = router;
