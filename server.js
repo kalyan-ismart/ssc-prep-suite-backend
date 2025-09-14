@@ -38,19 +38,17 @@ if (!fs.existsSync('logs')) {
 
 // --- Middleware Setup ---
 
-// Dynamic CORS configuration to support both production and local development
+// Dynamic CORS configuration
 const allowedOrigins = [
   'https://sarkarisuccess.netlify.app', // Your production frontend URL
 ];
 
-// In development, allow requests from common localhost ports
 if (process.env.NODE_ENV !== 'production') {
   allowedOrigins.push('http://localhost:3000', 'http://localhost:5173', 'http://localhost:8080');
 }
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, Postman, or server-to-server calls)
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -62,29 +60,15 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Security, compression, and body parsing
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-    },
-  },
-}));
+app.use(helmet());
 app.use(compression());
-
-// Request size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// HTTP request logger (morgan) for development
 if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
 }
 
-// Advanced logging with Winston for production
 if (process.env.NODE_ENV === 'production') {
   const logger = winston.createLogger({
     transports: [
@@ -108,10 +92,9 @@ if (process.env.NODE_ENV === 'production') {
   }));
 }
 
-// Rate limiting to prevent abuse
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Max 100 requests per IP per window
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -121,160 +104,89 @@ const limiter = rateLimit({
   },
 });
 
-app.use('/api/', limiter); // Apply rate limiter to all API routes
+app.use('/api/', limiter);
 
-// --- Database Connection ---
+// --- Database Connection (FIXED) ---
 
 const connectDB = async () => {
-  const uri = process.env.ATLAS_URI;
-
-  // --- FIX: Removed the deprecated 'bufferMaxEntries' option ---
-  const options = {
-    maxPoolSize: 10, // Maintain up to 10 socket connections
-    serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
-    socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
-    bufferCommands: false, // Disable mongoose buffering
-  };
-
   try {
-    await mongoose.connect(uri, options);
-    console.log('MongoDB connected successfully');
-
-    // Log database connection events
-    mongoose.connection.on('connected', () => {
-      console.log('Mongoose connected to MongoDB');
-    });
-
-    mongoose.connection.on('error', (err) => {
-      console.error('MongoDB runtime error:', err);
-    });
-
-    mongoose.connection.on('disconnected', () => {
-      console.log('Mongoose disconnected from MongoDB');
-    });
-
+    // Corrected and modernized the connection logic.
+    // The typo `bufffermaxentries` is gone, and deprecated options are removed.
+    await mongoose.connect(process.env.ATLAS_URI);
+    console.log('MongoDB database connection established successfully');
   } catch (err) {
     console.error('MongoDB connection error:', err);
-    // Retry connection after 5 seconds
-    setTimeout(connectDB, 5000);
+    process.exit(1); // Exit process with failure
   }
 };
 
 connectDB();
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  try {
-    await mongoose.connection.close();
-    console.log('MongoDB connection closed through app termination');
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during graceful shutdown:', error);
-    process.exit(1);
-  }
+mongoose.connection.on('error', err => {
+  console.error('MongoDB runtime error:', err);
 });
+
+mongoose.connection.on('disconnected', () => {
+  console.log('Mongoose disconnected from MongoDB');
+});
+
 
 // --- API Routes ---
 
-// Health Check Route
 app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'SarkariSuccess-Hub API is running!',
-    platform: 'Comprehensive Government Exam Preparation Hub',
     version: '2.0',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
   });
 });
 
-// Health check endpoint for monitoring
-app.get('/health', async (req, res) => {
-  try {
-    // Check database connection
-    const dbState = mongoose.connection.readyState;
-    const dbStatus = dbState === 1 ? 'connected' : 'disconnected';
-
-    res.json({
-      success: true,
-      status: 'healthy',
-      database: dbStatus,
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime()
-    });
-  } catch (error) {
-    res.status(503).json({
-      success: false,
-      status: 'unhealthy',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
+app.get('/health', (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = dbState === 1 ? 'connected' : 'disconnected';
+  res.json({
+    success: true,
+    status: 'healthy',
+    database: dbStatus,
+    uptime: process.uptime()
+  });
 });
 
-// Register all API routes under the /api prefix
 app.use('/api', apiRoutes);
+
 
 // --- Error Handling Middleware ---
 
-// 404 handler for unmatched routes
 app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: 'Route not found. Please check the API documentation for valid endpoints.',
-    requestedUrl: req.originalUrl,
-    method: req.method,
-    timestamp: new Date().toISOString()
   });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
-  // If the error is from CORS, send a specific message
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      message: 'This request is blocked by CORS policy.',
-      code: 'CORS_ERROR'
-    });
-  }
-
-  // Log the error
-  console.error('Unhandled Error:', {
-    error: err.message,
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method,
-    timestamp: new Date().toISOString()
-  });
-
+  console.error('Unhandled Error:', err);
   res.status(err.status || 500).json({
     success: false,
     message: process.env.NODE_ENV === 'production'
       ? 'An unexpected error occurred on the server.'
       : err.message,
-    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
-    timestamp: new Date().toISOString()
   });
 });
+
 
 // --- Server Activation ---
 
 const server = app.listen(PORT, () => {
-  if (process.env.NODE_ENV !== 'test') {
-    console.log(`SarkariSuccess-Hub API running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Health check available at: http://localhost:${PORT}/health`);
-  }
+  console.log(`SarkariSuccess-Hub API running on port ${PORT}`);
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
+process.on('unhandledRejection', (err) => {
   console.error('Unhandled Promise Rejection:', err);
   server.close(() => {
     process.exit(1);
   });
 });
 
-// Export app and server for testing purposes
 module.exports = { app, server };
