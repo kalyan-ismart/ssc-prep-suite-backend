@@ -176,7 +176,7 @@ const connectDB = async () => {
     const options = {
       ssl: process.env.NODE_ENV === 'production',
       sslValidate: process.env.NODE_ENV === 'production',
-      authenticationTimeout: 10000,
+      authTimeoutMS: 10000,
       socketTimeoutMS: 45000,
       maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
       minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE) || 5,
