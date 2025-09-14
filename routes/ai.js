@@ -1,170 +1,195 @@
+// routes/ai.js - Compatible with OpenAI v3.3.0
+
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const rateLimit = require('express-rate-limit');
-// FIXED: Import the OpenAI class directly
-const OpenAI = require('openai');
-const { errorResponse } = require('../utils/errors');
-require('dotenv').config();
+const { Configuration, OpenAIApi } = require('openai');
+const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
+const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validate environment variables
-if (!process.env.OPENAI_KEY) {
-  throw new Error('OPENAI_KEY is not set in environment variables.');
-}
-
-// FIXED: Initialize the OpenAI client using the new v4 syntax
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_KEY,
+// Initialize OpenAI API (v3.3.0 syntax)
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
 });
+const openai = new OpenAIApi(configuration);
 
-const AI_MODEL = process.env.AI_MODEL || 'gpt-4';
+// Validation middleware
+const validateChatRequest = [
+  body('message')
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 1000 })
+    .withMessage('Message must be 1-1000 characters'),
+  body('context')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Context must be less than 500 characters'),
+];
 
-// --- RATE LIMITERS ---
-const generalLimiter = rateLimit({ windowMs: 60 * 1000, max: 5 }); 
-const studyAssistantLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
-const doubtSolverLimiter = rateLimit({ windowMs: 60 * 1000, max: 5 });
-const questionGeneratorLimiter = rateLimit({ windowMs: 60 * 1000, max: 3 });
+// @route POST /ai/chat
+// @desc Chat with OpenAI
+// @access Private
+router.post('/chat', [auth, ...validateChatRequest], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return errorResponse(res, 422, 'Validation failed.', errors.array());
+  }
 
+  const { message, context } = req.body;
 
-// --- VALIDATION MIDDLEWARE ---
-const validatePrompt = body('prompt').isString().trim().isLength({ min: 1 }).withMessage('Prompt is required');
-const validateQuestion = body('question').isString().trim().isLength({ min: 1 }).withMessage('Question is required');
-const validateTopic = body('topic').isString().trim().isLength({ min: 1 }).withMessage('Topic is required');
-const validateDetails = body('details').isString().trim().isLength({ min: 1 }).withMessage('Details are required');
-const validateInput = body('input').isString().trim().isLength({ min: 1 }).withMessage('Input is required');
-const validateText = body('text').isString().trim().isLength({ min: 1 }).withMessage('Text is required');
-const validateVoiceInput = body('voiceInput').isString().trim().isLength({ min: 1 }).withMessage('Voice input is required');
-
-
-// --- HELPER FOR AI CALLS ---
-const performAICall = async (messages, res) => {
   try {
-    // FIXED: Use the new `openai.chat.completions.create` method
-    const completion = await openai.chat.completions.create({
-      model: AI_MODEL,
-      messages: messages,
+    // Check if API key is configured
+    if (!process.env.OPENAI_API_KEY) {
+      return errorResponse(res, 500, 'OpenAI API key not configured.');
+    }
+
+    // Prepare the prompt
+    const systemPrompt = context || "You are a helpful assistant for government exam preparation and educational content.";
+    const prompt = `${systemPrompt}\n\nUser: ${message}\nAssistant:`;
+
+    // Make OpenAI API call (v3.3.0 syntax)
+    const completion = await openai.createCompletion({
+      model: "text-davinci-003",
+      prompt: prompt,
+      max_tokens: 500,
+      temperature: 0.7,
+      top_p: 1,
+      frequency_penalty: 0,
+      presence_penalty: 0,
     });
 
-    // FIXED: Access the response content from the new object structure
-    const content = completion?.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Invalid response from OpenAI');
+    const aiResponse = completion.data.choices[0]?.text?.trim();
 
-    return content;
-  } catch (err) {
-    console.error('OpenAI API Error:', err.response ? err.response.data : err.message);
-    const errorMessage = process.env.NODE_ENV === 'production' ? 'An error occurred with the AI service' : err.message;
-    errorResponse(res, 500, 'AI generation failed', [errorMessage]);
-    return null;
-  }
-};
-
-
-// --- API ROUTES ---
-
-// POST /ai/study-assistant
-router.post('/study-assistant', studyAssistantLimiter, validatePrompt, async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
-  
-  const answer = await performAICall([{ role: 'user', content: req.body.prompt }], res);
-  if (answer) res.json({ success: true, data: { answer } });
-});
-
-// POST /ai/doubt-solver
-router.post('/doubt-solver', doubtSolverLimiter, validateQuestion, async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
-
-  const solution = await performAICall([{ role: 'user', content: `Explain and solve: ${req.body.question}` }], res);
-  if (solution) res.json({ success: true, data: { solution } });
-});
-
-// POST /ai/question-generator
-router.post('/question-generator', questionGeneratorLimiter, validateTopic, async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
-
-  const questionsText = await performAICall([
-    { role: 'system', content: 'You are a helpful assistant that generates multiple-choice questions.' },
-    { role: 'user', content: `Generate 5 multiple-choice questions on the topic of "${req.body.topic}". Provide 4 options for each and indicate the correct answer.` }
-  ], res);
-  
-  if (questionsText) {
-    // Attempt to format the text into a more structured array
-    const questions = questionsText.split('\n').filter(q => q.trim() !== '');
-    res.json({ success: true, data: { questions } });
-  }
-});
-
-// POST /ai/performance-predictor
-router.post('/performance-predictor', generalLimiter, validateDetails, async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
-
-    const prediction = await performAICall([
-        { role: 'system', content: 'You are a helpful assistant that predicts student performance.' },
-        { role: 'user', content: `Based on these details, predict the performance: ${req.body.details}` }
-    ], res);
-    if (prediction) res.json({ success: true, data: { prediction } });
-});
-
-// POST /ai/study-recommendation
-router.post('/study-recommendation', generalLimiter, validateInput, async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
-
-    const recommendationsText = await performAICall([
-        { role: 'system', content: 'You are a helpful study advisor.' },
-        { role: 'user', content: `Provide study recommendations for the following topic/question: ${req.body.input}` }
-    ], res);
-
-    if (recommendationsText) {
-      const recommendations = recommendationsText.split('\n').filter(r => r.trim() !== '');
-      res.json({ success: true, data: { recommendations } });
+    if (!aiResponse) {
+      return errorResponse(res, 500, 'No response from OpenAI.');
     }
-});
 
-// POST /ai/content-summarizer
-router.post('/content-summarizer', generalLimiter, validateText, async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
+    // Log AI usage for monitoring
+    logSecurityEvent('AI_CHAT_REQUEST', {
+      userId: req.user.id,
+      messageLength: message.length,
+      responseLength: aiResponse.length
+    }, req);
 
-    const summary = await performAICall([
-        { role: 'system', content: 'You are a helpful assistant that summarizes text.' },
-        { role: 'user', content: `Summarize the following content: ${req.body.text}` }
-    ], res);
-    if (summary) res.json({ success: true, data: { summary } });
-});
+    res.json({
+      success: true,
+      data: {
+        message: aiResponse,
+        model: "text-davinci-003",
+        usage: {
+          prompt_tokens: completion.data.usage?.prompt_tokens || 0,
+          completion_tokens: completion.data.usage?.completion_tokens || 0,
+          total_tokens: completion.data.usage?.total_tokens || 0,
+        }
+      }
+    });
 
-// POST /ai/smart-flashcards
-router.post('/smart-flashcards', generalLimiter, validateTopic, async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
-
-    const flashcardsText = await performAICall([
-        { role: 'system', content: 'You are a helpful assistant that creates flashcards.' },
-        { role: 'user', content: `Generate 5 flashcards (question/answer format) for the topic: ${req.body.topic}` }
-    ], res);
-
-    if (flashcardsText) {
-      const flashcards = flashcardsText.split('\n').filter(f => f.trim() !== '');
-      res.json({ success: true, data: { flashcards } });
+  } catch (error) {
+    // Handle OpenAI API errors
+    if (error.response?.status === 401) {
+      return errorResponse(res, 401, 'Invalid OpenAI API key.');
     }
-});
+    if (error.response?.status === 429) {
+      return errorResponse(res, 429, 'OpenAI API rate limit exceeded.');
+    }
+    if (error.response?.status === 400) {
+      return errorResponse(res, 400, 'Invalid request to OpenAI API.');
+    }
 
-// POST /ai/voice-assistant
-router.post('/voice-assistant', studyAssistantLimiter, validateVoiceInput, async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
+    console.error('OpenAI API Error:', error.message);
+    return errorResponse(res, 500, 'AI service temporarily unavailable.');
+  }
+}));
 
-    const response = await performAICall([
-        { role: 'system', content: 'You are a helpful voice assistant.' },
-        { role: 'user', content: req.body.voiceInput }
-    ], res);
-    if (response) res.json({ success: true, data: { response } });
-});
+// @route POST /ai/summarize
+// @desc Summarize text content
+// @access Private  
+router.post('/summarize', [
+  auth,
+  body('text')
+    .isString()
+    .trim()
+    .isLength({ min: 10, max: 5000 })
+    .withMessage('Text must be 10-5000 characters')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return errorResponse(res, 422, 'Validation failed.', errors.array());
+  }
 
+  const { text } = req.body;
+
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return errorResponse(res, 500, 'OpenAI API key not configured.');
+    }
+
+    const prompt = `Please provide a concise summary of the following text:\n\n${text}\n\nSummary:`;
+
+    const completion = await openai.createCompletion({
+      model: "text-davinci-003",
+      prompt: prompt,
+      max_tokens: 300,
+      temperature: 0.3,
+      top_p: 1,
+      frequency_penalty: 0,
+      presence_penalty: 0,
+    });
+
+    const summary = completion.data.choices[0]?.text?.trim();
+
+    if (!summary) {
+      return errorResponse(res, 500, 'No response from OpenAI.');
+    }
+
+    logSecurityEvent('AI_SUMMARIZE_REQUEST', {
+      userId: req.user.id,
+      textLength: text.length,
+      summaryLength: summary.length
+    }, req);
+
+    res.json({
+      success: true,
+      data: {
+        summary: summary,
+        original_length: text.length,
+        summary_length: summary.length,
+        compression_ratio: Math.round((summary.length / text.length) * 100)
+      }
+    });
+
+  } catch (error) {
+    console.error('OpenAI API Error:', error.message);
+    return handleDatabaseError(res, error);
+  }
+}));
+
+// @route GET /ai/health
+// @desc Check AI service health
+// @access Private
+router.get('/health', auth, asyncHandler(async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.json({
+        success: false,
+        status: 'error',
+        message: 'OpenAI API key not configured'
+      });
+    }
+
+    res.json({
+      success: true,
+      status: 'healthy',
+      service: 'OpenAI API v3.3.0',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    return errorResponse(res, 500, 'AI service health check failed.');
+  }
+}));
 
 module.exports = router;
-
