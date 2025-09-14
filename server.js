@@ -39,7 +39,7 @@ if (!fs.existsSync('logs')) {
 // --- Enhanced Security Middleware Setup ---
 
 // Dynamic CORS configuration with enhanced security
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['https://sarkarisuccess.netlify.app'];
 
@@ -92,7 +92,7 @@ app.use(helmet({
 app.use(compression());
 
 // Body parsing with size limits
-app.use(express.json({ 
+app.use(express.json({
   limit: '10mb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
@@ -170,20 +170,28 @@ const authLimiter = rateLimit({
 // Apply rate limiting
 app.use('/api/', generalLimiter);
 
-// --- Enhanced Database Connection ---
+// --- FIXED MongoDB Database Connection ---
 const connectDB = async () => {
   try {
+    // ✅ FIXED: Use only safe, universally supported MongoDB options
     const options = {
-      ssl: process.env.NODE_ENV === 'production',
-      sslValidate: process.env.NODE_ENV === 'production',
-      authTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
+      // Core connection pool settings
       maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
       minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE) || 5,
-      retryWrites: true,
-      w: 'majority',
+      
+      // Timeout settings (well supported)
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
       connectTimeoutMS: 30000,
-      serverSelectionTimeoutMS: 5000
+      
+      // Write concern and reliability
+      retryWrites: true,
+      w: 'majority'
+      
+      // ❌ REMOVED: These options were causing the deployment error:
+      // ssl: process.env.NODE_ENV === 'production',
+      // sslValidate: process.env.NODE_ENV === 'production',
+      // authTimeoutMS: 10000,
     };
 
     await mongoose.connect(process.env.ATLAS_URI, options);
@@ -267,10 +275,10 @@ app.use((err, req, res, next) => {
   // Determine error status and message
   const status = err.status || err.statusCode || 500;
   let message;
-
+  
   if (status >= 500) {
-    message = process.env.NODE_ENV === 'production' 
-      ? 'Internal Server Error' 
+    message = process.env.NODE_ENV === 'production'
+      ? 'Internal Server Error'
       : err.message;
   } else {
     message = err.message || 'Bad Request';
