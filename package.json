@@ -36,7 +36,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.5.0",
     "morgan": "^1.10.0",
-    "openai": "^5.20.2",
+    "openai": "^4.40.0",
     "winston": "^3.10.0"
   },
   "devDependencies": {
@@ -51,10 +51,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/sarkarisuccess-hub.git"
+    "url": "https://github.com/kalyan-ismart/sarkarisuccess-hub.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/sarkarisuccess-hub/issues"
+    "url": "https://github.com/kalyan-ismart/sarkarisuccess-hub/issues"
   },
   "homepage": "https://sarkarisuccess.netlify.app"
 }
