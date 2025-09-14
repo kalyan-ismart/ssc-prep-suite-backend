@@ -13,6 +13,7 @@ const quizRoutes = require('./quizzes');
 const goalRoutes = require('./goals');
 const examScheduleRoutes = require('./examSchedule');
 const moduleRoutes = require('./modules');
+const aiRoutes = require('./ai'); // FIXED: Import the AI routes
 
 // Register each route module with its base path
 router.use('/tools', toolRoutes);
@@ -24,5 +25,6 @@ router.use('/quizzes', quizRoutes);
 router.use('/goals', goalRoutes);
 router.use('/exam-schedule', examScheduleRoutes);
 router.use('/modules', moduleRoutes);
+router.use('/ai', aiRoutes); // FIXED: Register the AI routes under /ai
 
 module.exports = router;
