@@ -2,19 +2,21 @@
 
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
+const validator = require('validator');
 const Quiz = require('../models/quiz.model');
-const { errorResponse, handleDatabaseError, asyncHandler } = require('../utils/errors');
+const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation middleware for create/update
+// Enhanced validation middleware for create/update
 const validateQuiz = [
   body('title')
     .isString()
     .trim()
     .isLength({ min: 1, max: 100 })
-    .withMessage('Title must be 1-100 characters'),
+    .withMessage('Title must be 1-100 characters')
+    .customSanitizer((value) => validator.escape(value)),
   body('questions')
     .optional()
     .isArray()
@@ -23,7 +25,8 @@ const validateQuiz = [
     .optional()
     .isString()
     .trim()
-    .withMessage('Question text must be a string'),
+    .withMessage('Question text must be a string')
+    .customSanitizer((value) => validator.escape(value)),
   body('questions.*.options')
     .optional()
     .isArray()
@@ -32,7 +35,8 @@ const validateQuiz = [
     .optional()
     .isString()
     .trim()
-    .withMessage('Option text must be a string'),
+    .withMessage('Option text must be a string')
+    .customSanitizer((value) => validator.escape(value)),
   body('questions.*.options.*.isCorrect')
     .optional()
     .isBoolean()
@@ -67,11 +71,12 @@ const validateQuizQuery = [
     .optional()
     .isString()
     .isLength({ max: 100 })
-    .withMessage('Search query too long'),
+    .withMessage('Search query too long')
+    .customSanitizer((value) => validator.escape(value)),
   query('page')
     .optional()
-    .isInt({ min: 1 })
-    .withMessage('Page must be a positive integer'),
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Page must be between 1 and 1000'),
   query('limit')
     .optional()
     .isInt({ min: 1, max: 50 })
@@ -92,19 +97,21 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
   try {
     const { category, difficulty, search, active } = req.query;
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
     const skip = (page - 1) * limit;
 
     const filter = {};
-    
+
     // Build filter
     if (category) filter.category = category;
     if (difficulty) filter.difficulty = difficulty;
-    if (active !== undefined) filter.isActive = active;
+    if (active !== undefined) filter.isActive = active === 'true';
+
     if (search) {
+      const sanitizedSearch = validator.escape(search);
       filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { 'questions.questionText': { $regex: search, $options: 'i' } },
+        { title: { $regex: sanitizedSearch, $options: 'i' } },
+        { 'questions.questionText': { $regex: sanitizedSearch, $options: 'i' } },
       ];
     }
 
@@ -117,6 +124,7 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
       Quiz.find(filter)
         .populate('category', 'name icon color')
         .populate('createdBy', 'username fullName')
+        .select('-__v')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -126,8 +134,8 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
 
     const totalPages = Math.ceil(total / limit);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data,
       pagination: {
         page,
@@ -155,7 +163,6 @@ router.get('/:id', [
 
   try {
     const filter = { _id: req.params.id };
-    
     // Non-admin users can only see active quizzes
     if (!req.user || req.user.role !== 'admin') {
       filter.isActive = true;
@@ -164,6 +171,7 @@ router.get('/:id', [
     const quiz = await Quiz.findOne(filter)
       .populate('category', 'name icon color')
       .populate('createdBy', 'username fullName')
+      .select('-__v')
       .lean();
 
     if (!quiz) {
@@ -184,8 +192,10 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
   }
 
   try {
-    // Check if title already exists
-    const existingQuiz = await Quiz.findOne({ title: req.body.title });
+    // Check if title already exists (case-insensitive)
+    const existingQuiz = await Quiz.findOne({ 
+      title: new RegExp(`^${req.body.title.trim()}$`, 'i') 
+    });
     if (existingQuiz) {
       return errorResponse(res, 409, 'Quiz title already exists.');
     }
@@ -203,12 +213,19 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
     const populatedQuiz = await Quiz.findById(quiz._id)
       .populate('category', 'name icon color')
       .populate('createdBy', 'username fullName')
+      .select('-__v')
       .lean();
 
-    res.status(201).json({ 
-      success: true, 
-      message: 'Quiz added successfully.', 
-      data: populatedQuiz 
+    logSecurityEvent('QUIZ_CREATED', { 
+      quizId: quiz._id, 
+      title: quiz.title, 
+      createdBy: req.user.id 
+    }, req);
+
+    res.status(201).json({
+      success: true,
+      message: 'Quiz added successfully.',
+      data: populatedQuiz
     });
   } catch (error) {
     return handleDatabaseError(res, error);
@@ -234,12 +251,19 @@ router.post('/update/:id', [
 
     // Check ownership - only admin or quiz creator can update
     if (req.user.role !== 'admin' && quiz.createdBy?.toString() !== req.user.id) {
+      logSecurityEvent('UNAUTHORIZED_QUIZ_UPDATE', { 
+        quizId: req.params.id, 
+        userId: req.user.id 
+      }, req);
       return errorResponse(res, 403, 'You can only update quizzes you created.');
     }
 
     // Check for duplicate title if changing
-    if (req.body.title && req.body.title !== quiz.title) {
-      const existingQuiz = await Quiz.findOne({ title: req.body.title });
+    if (req.body.title && req.body.title.trim() !== quiz.title) {
+      const existingQuiz = await Quiz.findOne({ 
+        title: new RegExp(`^${req.body.title.trim()}$`, 'i'),
+        _id: { $ne: req.params.id }
+      });
       if (existingQuiz) {
         return errorResponse(res, 409, 'Quiz title already exists.');
       }
@@ -247,7 +271,6 @@ router.post('/update/:id', [
 
     // Update fields
     const updateData = { ...req.body, updatedAt: new Date() };
-    
     // Only admin can change certain fields
     if (req.user.role !== 'admin') {
       delete updateData.isActive;
@@ -260,12 +283,18 @@ router.post('/update/:id', [
     )
       .populate('category', 'name icon color')
       .populate('createdBy', 'username fullName')
+      .select('-__v')
       .lean();
 
-    res.json({ 
-      success: true, 
-      message: 'Quiz updated successfully.', 
-      data: updatedQuiz 
+    logSecurityEvent('QUIZ_UPDATED', { 
+      quizId: req.params.id, 
+      updatedBy: req.user.id 
+    }, req);
+
+    res.json({
+      success: true,
+      message: 'Quiz updated successfully.',
+      data: updatedQuiz
     });
   } catch (error) {
     return handleDatabaseError(res, error);
@@ -291,8 +320,14 @@ router.delete('/:id', [
 
     await Quiz.findByIdAndDelete(req.params.id);
 
-    res.json({ 
-      success: true, 
+    logSecurityEvent('QUIZ_DELETED', { 
+      quizId: req.params.id, 
+      title: quiz.title, 
+      deletedBy: req.user.id 
+    }, req);
+
+    res.json({
+      success: true,
       message: 'Quiz deleted successfully.',
       deletedQuiz: {
         id: quiz._id,
@@ -328,11 +363,16 @@ router.post('/:id/submit', [
     }
 
     const { answers, timeSpent } = req.body;
-    
+
+    // Validate answers array length
+    if (answers.length !== quiz.questions.length) {
+      return errorResponse(res, 400, 'Invalid number of answers provided.');
+    }
+
     // Calculate score
     let correctAnswers = 0;
     let totalQuestions = quiz.questions.length;
-    
+
     answers.forEach((answer, index) => {
       if (quiz.questions[index]) {
         const correctOption = quiz.questions[index].options.find(opt => opt.isCorrect);
@@ -343,7 +383,15 @@ router.post('/:id/submit', [
     });
 
     const score = Math.round((correctAnswers / totalQuestions) * 100);
-    
+
+    // Log quiz submission for security monitoring
+    logSecurityEvent('QUIZ_SUBMITTED', {
+      quizId: req.params.id,
+      userId: req.user.id,
+      score,
+      timeSpent: timeSpent || 0
+    }, req);
+
     // Create submission record (if you have a submissions model)
     const submission = {
       userId: req.user.id,
@@ -396,10 +444,17 @@ router.post('/:id/toggle', [
 
     const populatedQuiz = await Quiz.findById(quiz._id)
       .populate('category', 'name icon color')
+      .select('-__v')
       .lean();
 
-    res.json({ 
-      success: true, 
+    logSecurityEvent('QUIZ_STATUS_TOGGLED', { 
+      quizId: quiz._id, 
+      newStatus: quiz.isActive, 
+      toggledBy: req.user.id 
+    }, req);
+
+    res.json({
+      success: true,
       message: `Quiz ${quiz.isActive ? 'activated' : 'deactivated'} successfully.`,
       data: populatedQuiz
     });

@@ -15,7 +15,7 @@ const validate = (req, res, next) => {
       errors: errors.array(),
     });
   }
-  next();
+  return next(); // FIXED: Added return statement to prevent execution after validation failure
 };
 
 /**

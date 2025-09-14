@@ -37,6 +37,7 @@
     "mongoose": "^7.5.0",
     "morgan": "^1.10.0",
     "openai": "^4.40.0",
+    "validator": "^13.15.15",
     "winston": "^3.10.0"
   },
   "devDependencies": {
@@ -58,4 +59,3 @@
   },
   "homepage": "https://sarkarisuccess.netlify.app"
 }
-

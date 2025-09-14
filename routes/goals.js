@@ -1,57 +1,143 @@
 // routes/goals.js
+
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
+const validator = require('validator');
 const Goal = require('../models/goal.model');
-const { errorResponse } = require('../utils/errors');
+const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
+const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation middleware for create/update
+// Enhanced validation middleware for create/update
 const validateGoal = [
-  body('userId').isMongoId().withMessage('Valid user ID is required'),
-  body('title').isString().trim().isLength({ min: 1, max: 100 }).withMessage('Title must be 1-100 characters'),
-  body('target').isInt({ min: 1 }).withMessage('Target must be a positive integer'),
-  body('completed').optional().isBoolean().withMessage('Completed must be a boolean'),
-  body('category').isMongoId().withMessage('Valid category ID is required'),
-  body('deadline').isISO8601().toDate().withMessage('Valid ISO date is required'),
-  body('progress').optional().isInt({ min: 0 }).withMessage('Progress must be a non-negative integer'),
-  body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
+  body('userId')
+    .isMongoId()
+    .withMessage('Valid user ID is required'),
+  body('title')
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Title must be 1-100 characters')
+    .customSanitizer((value) => validator.escape(value)),
+  body('target')
+    .isInt({ min: 1, max: 100000 })
+    .withMessage('Target must be between 1 and 100000'),
+  body('completed')
+    .optional()
+    .isBoolean()
+    .withMessage('Completed must be a boolean'),
+  body('category')
+    .isMongoId()
+    .withMessage('Valid category ID is required'),
+  body('deadline')
+    .isISO8601()
+    .toDate()
+    .withMessage('Valid ISO date is required'),
+  body('progress')
+    .optional()
+    .isInt({ min: 0, max: 100000 })
+    .withMessage('Progress must be between 0 and 100000'),
+  body('isActive')
+    .optional()
+    .isBoolean()
+    .withMessage('isActive must be a boolean'),
 ];
 
-// GET all goals (with optional filters)
-router.get('/', [
-  query('userId').optional().isMongoId().withMessage('Valid user ID is required'),
-  query('category').optional().isMongoId().withMessage('Valid category ID is required'),
-  query('search').optional().isString().isLength({ max: 100 }).withMessage('Search query too long'),
-], async (req, res) => {
+const validateGoalQuery = [
+  query('userId')
+    .optional()
+    .isMongoId()
+    .withMessage('Valid user ID is required'),
+  query('category')
+    .optional()
+    .isMongoId()
+    .withMessage('Valid category ID is required'),
+  query('search')
+    .optional()
+    .isString()
+    .isLength({ max: 100 })
+    .withMessage('Search query too long')
+    .customSanitizer((value) => validator.escape(value)),
+  query('page')
+    .optional()
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Page must be between 1 and 1000'),
+  query('limit')
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage('Limit must be between 1 and 100'),
+];
+
+// GET all goals (with optional filters and enhanced security)
+router.get('/', [optionalAuth, ...validateGoalQuery], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return errorResponse(res, 422, 'Validation failed.', errors.array());
+  }
+
   try {
     const { userId, category, search } = req.query;
-    const filter = {};
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 100);
+    const skip = (page - 1) * limit;
 
+    const filter = {};
     if (userId) filter.user = userId;
     if (category) filter.category = category;
+
+    // Authorization check - users can only see their own goals unless admin
+    if (req.user && req.user.role !== 'admin' && userId && req.user.id !== userId) {
+      logSecurityEvent('UNAUTHORIZED_GOAL_ACCESS', { 
+        requesterId: req.user.id, 
+        targetUserId: userId 
+      }, req);
+      return errorResponse(res, 403, 'Access denied. You can only view your own goals.');
+    }
+
     if (search) {
+      const sanitizedSearch = validator.escape(search);
       filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
+        { title: { $regex: sanitizedSearch, $options: 'i' } },
       ];
     }
 
-    const data = await Goal.find(filter)
-      .populate('user', 'username fullName')
-      .populate('category', 'name icon color')
-      .sort({ deadline: 1 })
-      .lean();
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error(error);
-    errorResponse(res, 500, 'Failed to fetch goals.', [error.message]);
-  }
-});
+    const [data, total] = await Promise.all([
+      Goal.find(filter)
+        .populate('user', 'username fullName')
+        .populate('category', 'name icon color')
+        .select('-__v')
+        .skip(skip)
+        .limit(limit)
+        .sort({ deadline: 1 })
+        .lean(),
+      Goal.countDocuments(filter)
+    ]);
 
-// GET goal by ID
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({ 
+      success: true, 
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      }
+    });
+  } catch (error) {
+    return handleDatabaseError(res, error);
+  }
+}));
+
+// GET goal by ID with enhanced security
 router.get('/:id', [
+  optionalAuth,
   param('id').isMongoId().withMessage('Valid goal ID is required'),
-], async (req, res) => {
+], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return errorResponse(res, 422, 'Validation failed.', errors.array());
@@ -61,23 +147,46 @@ router.get('/:id', [
     const goal = await Goal.findById(req.params.id)
       .populate('user', 'username fullName')
       .populate('category', 'name icon color')
+      .select('-__v')
       .lean();
-    if (!goal) return errorResponse(res, 404, 'Goal not found.');
+
+    if (!goal) {
+      return errorResponse(res, 404, 'Goal not found.');
+    }
+
+    // Authorization check - users can only see their own goals unless admin
+    if (req.user && req.user.role !== 'admin' && req.user.id !== goal.user._id.toString()) {
+      logSecurityEvent('UNAUTHORIZED_GOAL_ACCESS', { 
+        requesterId: req.user.id, 
+        goalId: req.params.id,
+        goalOwner: goal.user._id 
+      }, req);
+      return errorResponse(res, 403, 'Access denied. You can only view your own goals.');
+    }
+
     res.json({ success: true, data: goal });
   } catch (error) {
-    console.error(error);
-    errorResponse(res, 500, 'Failed to fetch goal.', [error.message]);
+    return handleDatabaseError(res, error);
   }
-});
+}));
 
-// POST add goal
-router.post('/add', validateGoal, async (req, res) => {
+// POST add goal with authentication
+router.post('/add', [auth, ...validateGoal], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return errorResponse(res, 422, 'Validation failed.', errors.array());
   }
 
   try {
+    // Users can only create goals for themselves unless admin
+    if (req.user.role !== 'admin' && req.body.userId !== req.user.id) {
+      logSecurityEvent('UNAUTHORIZED_GOAL_CREATION', { 
+        requesterId: req.user.id, 
+        targetUserId: req.body.userId 
+      }, req);
+      return errorResponse(res, 403, 'You can only create goals for yourself.');
+    }
+
     const goal = new Goal({
       user: req.body.userId,
       title: req.body.title,
@@ -86,72 +195,142 @@ router.post('/add', validateGoal, async (req, res) => {
       deadline: req.body.deadline,
       progress: req.body.progress || 0,
       isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+      createdAt: new Date()
     });
+
     await goal.save();
+
     const populatedGoal = await Goal.findById(goal._id)
       .populate('user', 'username fullName')
       .populate('category', 'name icon color')
+      .select('-__v')
       .lean();
-    res.status(201).json({ success: true, message: 'Goal added.', data: populatedGoal });
-  } catch (error) {
-    console.error(error);
-    errorResponse(res, 500, 'Failed to add goal.', [error.message]);
-  }
-});
 
-// POST update goal by ID
+    logSecurityEvent('GOAL_CREATED', { 
+      goalId: goal._id, 
+      createdBy: req.user.id,
+      targetUserId: req.body.userId
+    }, req);
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Goal added successfully.', 
+      data: populatedGoal 
+    });
+  } catch (error) {
+    return handleDatabaseError(res, error);
+  }
+}));
+
+// POST update goal by ID with enhanced security
 router.post('/update/:id', [
+  auth,
   param('id').isMongoId().withMessage('Valid goal ID is required'),
   ...validateGoal.map(v => v.optional({ nullable: true })),
-], async (req, res) => {
+], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return errorResponse(res, 422, 'Validation failed.', errors.array());
   }
 
   try {
-    let goal = await Goal.findById(req.params.id);
-    if (!goal) return errorResponse(res, 404, 'Goal not found.');
+    const goal = await Goal.findById(req.params.id);
+    if (!goal) {
+      return errorResponse(res, 404, 'Goal not found.');
+    }
+
+    // Authorization check - users can only update their own goals unless admin
+    if (req.user.role !== 'admin' && req.user.id !== goal.user.toString()) {
+      logSecurityEvent('UNAUTHORIZED_GOAL_UPDATE', { 
+        requesterId: req.user.id, 
+        goalId: req.params.id,
+        goalOwner: goal.user 
+      }, req);
+      return errorResponse(res, 403, 'You can only update your own goals.');
+    }
+
+    // Prevent users from changing goal ownership unless admin
+    if (req.body.userId && req.user.role !== 'admin' && req.body.userId !== req.user.id) {
+      delete req.body.userId;
+    }
 
     // Update fields
-    if (req.body.userId) goal.user = req.body.userId;
-    if (req.body.title) goal.title = req.body.title;
-    if (req.body.target) goal.target = req.body.target;
-    if (req.body.completed !== undefined) goal.completed = req.body.completed;
-    if (req.body.category) goal.category = req.body.category;
-    if (req.body.deadline) goal.deadline = req.body.deadline;
-    if (req.body.progress !== undefined) goal.progress = req.body.progress;
-    if (req.body.isActive !== undefined) goal.isActive = req.body.isActive;
+    const updateData = {};
+    if (req.body.userId) updateData.user = req.body.userId;
+    if (req.body.title) updateData.title = req.body.title;
+    if (req.body.target) updateData.target = req.body.target;
+    if (req.body.completed !== undefined) updateData.completed = req.body.completed;
+    if (req.body.category) updateData.category = req.body.category;
+    if (req.body.deadline) updateData.deadline = req.body.deadline;
+    if (req.body.progress !== undefined) updateData.progress = req.body.progress;
+    if (req.body.isActive !== undefined) updateData.isActive = req.body.isActive;
+    updateData.updatedAt = new Date();
 
-    await goal.save();
-    const populatedGoal = await Goal.findById(goal._id)
+    const updatedGoal = await Goal.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    )
       .populate('user', 'username fullName')
       .populate('category', 'name icon color')
+      .select('-__v')
       .lean();
-    res.json({ success: true, message: 'Goal updated.', data: populatedGoal });
-  } catch (error) {
-    console.error(error);
-    errorResponse(res, 500, 'Failed to update goal.', [error.message]);
-  }
-});
 
-// DELETE goal by ID
+    logSecurityEvent('GOAL_UPDATED', { 
+      goalId: req.params.id, 
+      updatedBy: req.user.id 
+    }, req);
+
+    res.json({ 
+      success: true, 
+      message: 'Goal updated successfully.', 
+      data: updatedGoal 
+    });
+  } catch (error) {
+    return handleDatabaseError(res, error);
+  }
+}));
+
+// DELETE goal by ID with enhanced security
 router.delete('/:id', [
+  auth,
   param('id').isMongoId().withMessage('Valid goal ID is required'),
-], async (req, res) => {
+], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return errorResponse(res, 422, 'Validation failed.', errors.array());
   }
 
   try {
-    const result = await Goal.findByIdAndDelete(req.params.id).lean();
-    if (!result) return errorResponse(res, 404, 'Goal not found.');
-    res.json({ success: true, message: 'Goal deleted.' });
+    const goal = await Goal.findById(req.params.id);
+    if (!goal) {
+      return errorResponse(res, 404, 'Goal not found.');
+    }
+
+    // Authorization check - users can only delete their own goals unless admin
+    if (req.user.role !== 'admin' && req.user.id !== goal.user.toString()) {
+      logSecurityEvent('UNAUTHORIZED_GOAL_DELETE', { 
+        requesterId: req.user.id, 
+        goalId: req.params.id,
+        goalOwner: goal.user 
+      }, req);
+      return errorResponse(res, 403, 'You can only delete your own goals.');
+    }
+
+    await Goal.findByIdAndDelete(req.params.id);
+
+    logSecurityEvent('GOAL_DELETED', { 
+      goalId: req.params.id, 
+      deletedBy: req.user.id 
+    }, req);
+
+    res.json({ 
+      success: true, 
+      message: 'Goal deleted successfully.' 
+    });
   } catch (error) {
-    console.error(error);
-    errorResponse(res, 500, 'Failed to delete goal.', [error.message]);
+    return handleDatabaseError(res, error);
   }
-});
+}));
 
 module.exports = router;

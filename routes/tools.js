@@ -1,23 +1,28 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
+const validator = require('validator');
 const Tool = require('../models/tool.model');
-const { errorResponse, handleDatabaseError, asyncHandler } = require('../utils/errors');
+const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Validation middleware for create/update
+// Enhanced validation middleware for create/update
 const validateTool = [
   body('name')
     .isString()
     .trim()
     .isLength({ min: 2, max: 100 })
-    .withMessage('Name must be 2-100 characters'),
+    .withMessage('Name must be 2-100 characters')
+    .matches(/^[a-zA-Z0-9\s\-_\.]+$/)
+    .withMessage('Name contains invalid characters')
+    .customSanitizer((value) => validator.escape(value)),
   body('description')
     .isString()
     .trim()
     .isLength({ min: 5, max: 500 })
-    .withMessage('Description must be 5-500 characters'),
+    .withMessage('Description must be 5-500 characters')
+    .customSanitizer((value) => validator.escape(value)),
   body('category')
     .isMongoId()
     .withMessage('Valid category ID is required'),
@@ -30,17 +35,41 @@ const validateTool = [
     .withMessage('Invalid tool type'),
   body('isActive')
     .optional()
-    .isBoolean(),
+    .isBoolean()
+    .withMessage('isActive must be a boolean'),
   body('settings')
     .optional()
-    .isObject(),
+    .isObject()
+    .withMessage('Settings must be an object')
+    .custom((value) => {
+      // Validate settings object structure
+      if (value && typeof value === 'object') {
+        const allowedKeys = ['maxAttempts', 'timeLimit', 'difficulty', 'features'];
+        const keys = Object.keys(value);
+        const invalidKeys = keys.filter(key => !allowedKeys.includes(key));
+        if (invalidKeys.length > 0) {
+          throw new Error(`Invalid settings keys: ${invalidKeys.join(', ')}`);
+        }
+      }
+      return true;
+    }),
   body('tags')
     .optional()
-    .isArray()
-    .withMessage('Tags must be an array'),
+    .isArray({ max: 10 })
+    .withMessage('Tags must be an array with maximum 10 items')
+    .custom((tags) => {
+      if (tags && Array.isArray(tags)) {
+        for (const tag of tags) {
+          if (typeof tag !== 'string' || tag.length > 50) {
+            throw new Error('Each tag must be a string with maximum 50 characters');
+          }
+        }
+      }
+      return true;
+    }),
 ];
 
-// Validation middleware for query parameters
+// Enhanced validation middleware for query parameters
 const validateToolQuery = [
   query('category')
     .optional()
@@ -50,16 +79,18 @@ const validateToolQuery = [
     .optional()
     .isString()
     .isLength({ max: 50 })
-    .withMessage('Type must be a string with max 50 characters'),
+    .withMessage('Type must be a string with max 50 characters')
+    .customSanitizer((value) => validator.escape(value)),
   query('search')
     .optional()
     .isString()
     .isLength({ max: 100 })
-    .withMessage('Search query must be max 100 characters'),
+    .withMessage('Search query must be max 100 characters')
+    .customSanitizer((value) => validator.escape(value)),
   query('page')
     .optional()
-    .isInt({ min: 1 })
-    .withMessage('Page must be a positive integer'),
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Page must be between 1 and 1000'),
   query('limit')
     .optional()
     .isInt({ min: 1, max: 50 })
@@ -80,18 +111,23 @@ router.get('/', [optionalAuth, ...validateToolQuery], asyncHandler(async (req, r
   try {
     const { category, type, search, active } = req.query;
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50); // Cap limit at 50
     const skip = (page - 1) * limit;
 
     const filter = {};
+    
+    // Apply filters with proper validation
     if (category) filter.category = category;
     if (type) filter.toolType = type;
-    if (active !== undefined) filter.isActive = active;
+    if (active !== undefined) filter.isActive = active === 'true';
+
+    // Enhanced search with sanitized input
     if (search) {
+      const sanitizedSearch = validator.escape(search);
       filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { tags: { $elemMatch: { $regex: search, $options: 'i' } } },
+        { name: { $regex: sanitizedSearch, $options: 'i' } },
+        { description: { $regex: sanitizedSearch, $options: 'i' } },
+        { tags: { $elemMatch: { $regex: sanitizedSearch, $options: 'i' } } },
       ];
     }
 
@@ -103,6 +139,7 @@ router.get('/', [optionalAuth, ...validateToolQuery], asyncHandler(async (req, r
     const [data, total] = await Promise.all([
       Tool.find(filter)
         .populate('category', 'name icon color')
+        .select('-__v') // Exclude version field
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -115,7 +152,14 @@ router.get('/', [optionalAuth, ...validateToolQuery], asyncHandler(async (req, r
     res.json({
       success: true,
       data,
-      pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
+      pagination: { 
+        page, 
+        limit, 
+        total, 
+        totalPages, 
+        hasNext: page < totalPages, 
+        hasPrev: page > 1 
+      },
     });
   } catch (err) {
     return handleDatabaseError(res, err);
@@ -134,12 +178,15 @@ router.get('/:id', [
 
   try {
     const filter = { _id: req.params.id };
+    
+    // Non-admins can only see active tools
     if (!req.user || req.user.role !== 'admin') {
       filter.isActive = true;
     }
 
     const tool = await Tool.findOne(filter)
       .populate('category', 'name icon color')
+      .select('-__v')
       .lean();
 
     if (!tool) {
@@ -160,7 +207,11 @@ router.post('/add', [auth, adminAuth, ...validateTool], asyncHandler(async (req,
   }
 
   try {
-    const existing = await Tool.findOne({ name: req.body.name });
+    // Check for duplicate tool name (case-insensitive)
+    const existing = await Tool.findOne({ 
+      name: new RegExp(`^${req.body.name.trim()}$`, 'i') 
+    });
+    
     if (existing) {
       return errorResponse(res, 409, 'Tool name already exists.');
     }
@@ -170,14 +221,26 @@ router.post('/add', [auth, adminAuth, ...validateTool], asyncHandler(async (req,
       createdBy: req.user.id,
       createdAt: new Date(),
     });
+
     await tool.save();
 
     const populatedTool = await Tool.findById(tool._id)
       .populate('category', 'name icon color')
       .populate('createdBy', 'username fullName')
+      .select('-__v')
       .lean();
 
-    res.status(201).json({ success: true, message: 'Tool added successfully.', data: populatedTool });
+    logSecurityEvent('TOOL_CREATED', { 
+      toolId: tool._id, 
+      name: tool.name, 
+      createdBy: req.user.id 
+    }, req);
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Tool added successfully.', 
+      data: populatedTool 
+    });
   } catch (err) {
     return handleDatabaseError(res, err);
   }
@@ -202,28 +265,52 @@ router.post('/update/:id', [
 
     // Only admin or creator may update
     if (req.user.role !== 'admin' && tool.createdBy.toString() !== req.user.id) {
+      logSecurityEvent('UNAUTHORIZED_TOOL_UPDATE', { 
+        toolId: req.params.id, 
+        userId: req.user.id 
+      }, req);
       return errorResponse(res, 403, 'You can only update tools you created.');
     }
 
-    if (req.body.name && req.body.name !== tool.name) {
-      const dup = await Tool.findOne({ name: req.body.name });
+    // Check for duplicate name if changing
+    if (req.body.name && req.body.name.trim() !== tool.name) {
+      const dup = await Tool.findOne({ 
+        name: new RegExp(`^${req.body.name.trim()}$`, 'i'),
+        _id: { $ne: req.params.id }
+      });
       if (dup) {
         return errorResponse(res, 409, 'Tool name already exists.');
       }
     }
 
     const updateData = { ...req.body, updatedAt: new Date() };
+    
+    // Non-admins cannot change certain fields
     if (req.user.role !== 'admin') {
       delete updateData.isActive;
       delete updateData.category;
     }
 
-    const updatedTool = await Tool.findByIdAndUpdate(req.params.id, { $set: updateData }, { new: true, runValidators: true })
+    const updatedTool = await Tool.findByIdAndUpdate(
+      req.params.id, 
+      { $set: updateData }, 
+      { new: true, runValidators: true }
+    )
       .populate('category', 'name icon color')
       .populate('createdBy', 'username fullName')
+      .select('-__v')
       .lean();
 
-    res.json({ success: true, message: 'Tool updated successfully.', data: updatedTool });
+    logSecurityEvent('TOOL_UPDATED', { 
+      toolId: req.params.id, 
+      updatedBy: req.user.id 
+    }, req);
+
+    res.json({ 
+      success: true, 
+      message: 'Tool updated successfully.', 
+      data: updatedTool 
+    });
   } catch (err) {
     return handleDatabaseError(res, err);
   }
@@ -247,10 +334,21 @@ router.delete('/:id', [
     }
 
     await Tool.findByIdAndDelete(req.params.id);
+
+    logSecurityEvent('TOOL_DELETED', { 
+      toolId: req.params.id, 
+      name: tool.name, 
+      deletedBy: req.user.id 
+    }, req);
+
     res.json({
       success: true,
       message: 'Tool deleted successfully.',
-      deletedTool: { id: tool._id, name: tool.name, deletedAt: new Date().toISOString() },
+      deletedTool: { 
+        id: tool._id, 
+        name: tool.name, 
+        deletedAt: new Date().toISOString() 
+      },
     });
   } catch (err) {
     return handleDatabaseError(res, err);
@@ -280,9 +378,20 @@ router.post('/:id/toggle', [
 
     const populatedTool = await Tool.findById(tool._id)
       .populate('category', 'name icon color')
+      .select('-__v')
       .lean();
 
-    res.json({ success: true, message: `Tool ${tool.isActive ? 'activated' : 'deactivated'} successfully.`, data: populatedTool });
+    logSecurityEvent('TOOL_STATUS_TOGGLED', { 
+      toolId: tool._id, 
+      newStatus: tool.isActive, 
+      toggledBy: req.user.id 
+    }, req);
+
+    res.json({ 
+      success: true, 
+      message: `Tool ${tool.isActive ? 'activated' : 'deactivated'} successfully.`, 
+      data: populatedTool 
+    });
   } catch (err) {
     return handleDatabaseError(res, err);
   }
