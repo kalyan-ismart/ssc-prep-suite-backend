@@ -24,7 +24,8 @@
     "express-winston": "^4.2.0",
     "express-mongo-sanitize": "^2.2.0",
     "xss-clean": "^0.1.4",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "openai": "^4.20.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
@@ -40,7 +41,8 @@
     "express",
     "mongodb",
     "jwt",
-    "authentication"
+    "authentication",
+    "openai"
   ],
   "author": "Your Name",
   "license": "MIT"
