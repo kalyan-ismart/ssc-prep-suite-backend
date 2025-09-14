@@ -1,7 +1,8 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
-const { Configuration, OpenAIApi } = require('openai');
+// FIXED: Import the OpenAI class directly
+const OpenAI = require('openai');
 const { errorResponse } = require('../utils/errors');
 require('dotenv').config();
 
@@ -12,15 +13,14 @@ if (!process.env.OPENAI_KEY) {
   throw new Error('OPENAI_KEY is not set in environment variables.');
 }
 
-// Initialize OpenAI client
-const openai = new OpenAIApi(new Configuration({
+// FIXED: Initialize the OpenAI client using the new v4 syntax
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY,
-}));
+});
 
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4';
 
 // --- RATE LIMITERS ---
-// General limiter for less frequent tools
 const generalLimiter = rateLimit({ windowMs: 60 * 1000, max: 5 }); 
 const studyAssistantLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
 const doubtSolverLimiter = rateLimit({ windowMs: 60 * 1000, max: 5 });
@@ -40,12 +40,14 @@ const validateVoiceInput = body('voiceInput').isString().trim().isLength({ min: 
 // --- HELPER FOR AI CALLS ---
 const performAICall = async (messages, res) => {
   try {
-    const completion = await openai.createChatCompletion({
+    // FIXED: Use the new `openai.chat.completions.create` method
+    const completion = await openai.chat.completions.create({
       model: AI_MODEL,
       messages: messages,
     });
 
-    const content = completion?.data?.choices?.[0]?.message?.content;
+    // FIXED: Access the response content from the new object structure
+    const content = completion?.choices?.[0]?.message?.content;
     if (!content) throw new Error('Invalid response from OpenAI');
 
     return content;
@@ -58,7 +60,7 @@ const performAICall = async (messages, res) => {
 };
 
 
-// --- EXISTING ROUTES ---
+// --- API ROUTES ---
 
 // POST /ai/study-assistant
 router.post('/study-assistant', studyAssistantLimiter, validatePrompt, async (req, res) => {
@@ -83,15 +85,17 @@ router.post('/question-generator', questionGeneratorLimiter, validateTopic, asyn
   const errors = validationResult(req);
   if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
 
-  const questions = await performAICall([
+  const questionsText = await performAICall([
     { role: 'system', content: 'You are a helpful assistant that generates multiple-choice questions.' },
     { role: 'user', content: `Generate 5 multiple-choice questions on the topic of "${req.body.topic}". Provide 4 options for each and indicate the correct answer.` }
   ], res);
-  if (questions) res.json({ success: true, data: { questions } });
+  
+  if (questionsText) {
+    // Attempt to format the text into a more structured array
+    const questions = questionsText.split('\n').filter(q => q.trim() !== '');
+    res.json({ success: true, data: { questions } });
+  }
 });
-
-
-// --- NEWLY ADDED ROUTES ---
 
 // POST /ai/performance-predictor
 router.post('/performance-predictor', generalLimiter, validateDetails, async (req, res) => {
@@ -110,11 +114,15 @@ router.post('/study-recommendation', generalLimiter, validateInput, async (req, 
     const errors = validationResult(req);
     if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
 
-    const recommendations = await performAICall([
+    const recommendationsText = await performAICall([
         { role: 'system', content: 'You are a helpful study advisor.' },
         { role: 'user', content: `Provide study recommendations for the following topic/question: ${req.body.input}` }
     ], res);
-    if (recommendations) res.json({ success: true, data: { recommendations: recommendations.split('\n') } }); // Split into an array
+
+    if (recommendationsText) {
+      const recommendations = recommendationsText.split('\n').filter(r => r.trim() !== '');
+      res.json({ success: true, data: { recommendations } });
+    }
 });
 
 // POST /ai/content-summarizer
@@ -134,11 +142,15 @@ router.post('/smart-flashcards', generalLimiter, validateTopic, async (req, res)
     const errors = validationResult(req);
     if (!errors.isEmpty()) return errorResponse(res, 422, 'Validation failed', errors.array());
 
-    const flashcards = await performAICall([
+    const flashcardsText = await performAICall([
         { role: 'system', content: 'You are a helpful assistant that creates flashcards.' },
         { role: 'user', content: `Generate 5 flashcards (question/answer format) for the topic: ${req.body.topic}` }
     ], res);
-    if (flashcards) res.json({ success: true, data: { flashcards: flashcards.split('\n') } }); // Split into an array
+
+    if (flashcardsText) {
+      const flashcards = flashcardsText.split('\n').filter(f => f.trim() !== '');
+      res.json({ success: true, data: { flashcards } });
+    }
 });
 
 // POST /ai/voice-assistant
@@ -155,3 +167,4 @@ router.post('/voice-assistant', studyAssistantLimiter, validateVoiceInput, async
 
 
 module.exports = router;
+
