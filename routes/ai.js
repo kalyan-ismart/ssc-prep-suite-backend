@@ -29,9 +29,36 @@ const validateChatRequest = [
     .withMessage('Context must be less than 500 characters'),
 ];
 
+// @route GET /ai/health
+// @desc Check AI service health
+// @access Public (NO AUTH REQUIRED - FIXED)
+router.get('/health', asyncHandler(async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.json({
+        success: false,
+        status: 'error',
+        message: 'OpenAI API key not configured'
+      });
+    }
+
+    res.json({
+      success: true,
+      status: 'healthy',
+      service: 'OpenAI API v3.3.0',
+      timestamp: new Date().toISOString(),
+      authentication: 'Health check - no auth required'
+    });
+
+  } catch (error) {
+    console.error('Health check error:', error.message);
+    return errorResponse(res, 500, 'AI service health check failed.');
+  }
+}));
+
 // @route POST /ai/chat
 // @desc Chat with OpenAI
-// @access Private
+// @access Private (Auth Required)
 router.post('/chat', [auth, ...validateChatRequest], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -106,7 +133,7 @@ router.post('/chat', [auth, ...validateChatRequest], asyncHandler(async (req, re
 
 // @route POST /ai/summarize
 // @desc Summarize text content
-// @access Private  
+// @access Private (Auth Required)
 router.post('/summarize', [
   auth,
   body('text')
@@ -164,31 +191,6 @@ router.post('/summarize', [
   } catch (error) {
     console.error('OpenAI API Error:', error.message);
     return handleDatabaseError(res, error);
-  }
-}));
-
-// @route GET /ai/health
-// @desc Check AI service health
-// @access Private
-router.get('/health', auth, asyncHandler(async (req, res) => {
-  try {
-    if (!process.env.OPENAI_API_KEY) {
-      return res.json({
-        success: false,
-        status: 'error',
-        message: 'OpenAI API key not configured'
-      });
-    }
-
-    res.json({
-      success: true,
-      status: 'healthy',
-      service: 'OpenAI API v3.3.0',
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    return errorResponse(res, 500, 'AI service health check failed.');
   }
 }));
 
