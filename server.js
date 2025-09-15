@@ -26,7 +26,10 @@ const expressWinston = require('express-winston');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
 const fs = require('fs');
-const apiRoutes = require('./routes'); // Centralized API routes
+
+// Import individual route files
+const userRoutes = require('./routes/users');
+const aiRoutes = require('./routes/ai');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -43,23 +46,35 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['https://sarkarisuccess.netlify.app'];
 
+// Always add localhost for development
 if (process.env.NODE_ENV !== 'production') {
   allowedOrigins.push('http://localhost:3000', 'http://localhost:5173', 'http://localhost:8080');
 }
 
+console.log('🌐 CORS Allowed Origins:', allowedOrigins);
+
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (mobile apps, curl, postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      console.warn('🚫 CORS blocked origin:', origin);
+      callback(new Error(`Origin ${origin} not allowed by CORS policy`));
     }
   },
   credentials: true,
-  optionsSuccessStatus: 200 // Support legacy browsers
+  optionsSuccessStatus: 200, // Support legacy browsers
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
 app.use(cors(corsOptions));
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
 
 // Enhanced Helmet configuration for security headers
 app.use(helmet({
@@ -149,7 +164,7 @@ const generalLimiter = rateLimit({
   },
   skip: (req) => {
     // Skip rate limiting for health checks
-    return req.url === '/health';
+    return req.url === '/health' || req.url === '/';
   }
 });
 
@@ -170,34 +185,26 @@ const authLimiter = rateLimit({
 // Apply rate limiting
 app.use('/api/', generalLimiter);
 
-// --- FIXED MongoDB Database Connection ---
+// --- MongoDB Database Connection ---
 const connectDB = async () => {
   try {
-    // ✅ FIXED: Use only safe, universally supported MongoDB options
     const options = {
       // Core connection pool settings
       maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
       minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE) || 5,
-      
       // Timeout settings (well supported)
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
       connectTimeoutMS: 30000,
-      
       // Write concern and reliability
       retryWrites: true,
       w: 'majority'
-      
-      // ❌ REMOVED: These options were causing the deployment error:
-      // ssl: process.env.NODE_ENV === 'production',
-      // sslValidate: process.env.NODE_ENV === 'production',
-      // authTimeoutMS: 10000,
     };
 
     await mongoose.connect(process.env.ATLAS_URI, options);
-    console.log('MongoDB database connection established successfully');
+    console.log('✅ MongoDB database connection established successfully');
   } catch (err) {
-    console.error('MongoDB connection error:', err);
+    console.error('❌ MongoDB connection error:', err);
     process.exit(1);
   }
 };
@@ -205,18 +212,20 @@ const connectDB = async () => {
 connectDB();
 
 mongoose.connection.on('error', err => {
-  console.error('MongoDB runtime error:', err);
+  console.error('❌ MongoDB runtime error:', err);
 });
 
 mongoose.connection.on('disconnected', () => {
-  console.log('Mongoose disconnected from MongoDB');
+  console.log('⚠️ Mongoose disconnected from MongoDB');
 });
 
 mongoose.connection.on('reconnected', () => {
-  console.log('Mongoose reconnected to MongoDB');
+  console.log('✅ Mongoose reconnected to MongoDB');
 });
 
 // --- API Routes ---
+
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -227,6 +236,7 @@ app.get('/', (req, res) => {
   });
 });
 
+// Health check endpoint
 app.get('/health', (req, res) => {
   const dbState = mongoose.connection.readyState;
   const dbStatus = dbState === 1 ? 'connected' : 'disconnected';
@@ -245,15 +255,33 @@ app.get('/health', (req, res) => {
 app.use('/api/users/login', authLimiter);
 app.use('/api/users/register', authLimiter);
 
-// Main API routes
-app.use('/api', apiRoutes);
+// ✅ FIXED: Mount routes correctly under /api
+app.use('/api/users', userRoutes);
+app.use('/api/ai', aiRoutes);
+
+// Log mounted routes for debugging
+console.log('🚀 API Routes mounted:');
+console.log('  - /api/users (authentication & user management)');
+console.log('  - /api/ai (AI-powered features)');
 
 // --- Enhanced Error Handling Middleware ---
+
+// 404 handler
 app.use((req, res) => {
+  console.log(`❌ 404 Not Found: ${req.method} ${req.url}`);
   res.status(404).json({
     success: false,
     message: 'Route not found. Please check the API documentation for valid endpoints.',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    availableRoutes: [
+      'GET /',
+      'GET /health',
+      'POST /api/users/register',
+      'POST /api/users/login',
+      'GET /api/ai/health',
+      'POST /api/ai/chat',
+      'POST /api/ai/summarize'
+    ]
   });
 });
 
@@ -262,9 +290,9 @@ app.use((err, req, res, next) => {
   // Log error details securely
   const errorId = Date.now().toString(36) + Math.random().toString(36).substr(2);
   
-  console.error(`Error [${errorId}]:`, {
+  console.error(`❌ Error [${errorId}]:`, {
     message: err.message,
-    stack: err.stack,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     url: req.url,
     method: req.method,
     ip: req.ip,
@@ -275,7 +303,7 @@ app.use((err, req, res, next) => {
   // Determine error status and message
   const status = err.status || err.statusCode || 500;
   let message;
-  
+
   if (status >= 500) {
     message = process.env.NODE_ENV === 'production'
       ? 'Internal Server Error'
@@ -294,30 +322,35 @@ app.use((err, req, res, next) => {
 
 // --- Server Activation ---
 const server = app.listen(PORT, () => {
-  console.log(`SarkariSuccess-Hub API running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🚀 SarkariSuccess-Hub API running on port ${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 Health Check: http://localhost:${PORT}/health`);
+  
+  // Show OpenAI integration status
+  const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+  console.log(`🤖 OpenAI Integration: ${hasOpenAIKey ? '✅ Configured' : '❌ Missing API Key'}`);
 });
 
 // Graceful shutdown handling
 process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Promise Rejection:', err);
+  console.error('❌ Unhandled Promise Rejection:', err);
   server.close(() => {
     process.exit(1);
   });
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
+  console.error('❌ Uncaught Exception:', err);
   server.close(() => {
     process.exit(1);
   });
 });
 
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
+  console.log('⚠️ SIGTERM received. Shutting down gracefully...');
   server.close(() => {
     mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed.');
+      console.log('✅ MongoDB connection closed.');
       process.exit(0);
     });
   });
