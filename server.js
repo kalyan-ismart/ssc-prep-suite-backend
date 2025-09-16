@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+console.log("--- DEPLOYMENT TEST: RUNNING LATEST server.js at", new Date().toISOString(), "---");
+
+require('dotenv').config();
+
 // Validate critical environment variables at startup
 const requiredEnvVars = ['ATLAS_URI', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
