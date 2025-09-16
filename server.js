@@ -41,7 +41,7 @@ if (!fs.existsSync('logs')) {
 
 // --- Enhanced Security Middleware Setup ---
 
-// Dynamic CORS configuration with enhanced security
+// FIXED: Stricter CORS configuration with enhanced security
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['https://sarkarisuccess.netlify.app'];
@@ -55,8 +55,14 @@ console.log('🌐 CORS Allowed Origins:', allowedOrigins);
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, postman, etc.)
-    if (!origin) return callback(null, true);
+    // FIXED: Don't allow requests with no origin in production
+    if (!origin) {
+      if (process.env.NODE_ENV === 'production') {
+        console.warn('🚫 CORS blocked no-origin request in production');
+        return callback(new Error('No-origin requests not allowed in production'));
+      }
+      return callback(null, true);
+    }
     
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -66,14 +72,13 @@ const corsOptions = {
     }
   },
   credentials: true,
-  optionsSuccessStatus: 200, // Support legacy browsers
+  optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID']
 };
 
 app.use(cors(corsOptions));
-
-// Handle preflight requests
 app.options('*', cors(corsOptions));
 
 // Enhanced Helmet configuration for security headers
@@ -106,7 +111,14 @@ app.use(helmet({
 // Compression middleware
 app.use(compression());
 
-// Body parsing with size limits
+// Body parsing with size limits and request ID
+app.use((req, res, next) => {
+  // Generate unique request ID for tracking
+  req.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
+  res.setHeader('X-Request-ID', req.id);
+  next();
+});
+
 app.use(express.json({
   limit: '10mb',
   verify: (req, res, buf) => {
@@ -115,9 +127,14 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Security middleware for input sanitization
-app.use(mongoSanitize()); // Prevent NoSQL injection attacks
-app.use(xss()); // Clean user input from malicious HTML
+// ENHANCED: More comprehensive input sanitization
+app.use(mongoSanitize({
+  replaceWith: '_',
+  onSanitize: ({ key, req }) => {
+    console.warn(`⚠️ Sanitized input detected: ${key} in request ${req.id}`);
+  }
+}));
+app.use(xss());
 
 // Logging middleware
 if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
@@ -151,54 +168,57 @@ if (process.env.NODE_ENV === 'production') {
   }));
 }
 
-// Enhanced rate limiting with different tiers
+// FIXED: Optimized rate limiting with better UX
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // General API limit
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again after 15 minutes',
-    code: 'RATE_LIMIT_ERROR'
+    code: 'RATE_LIMIT_ERROR',
+    retryAfter: '15 minutes'
   },
   skip: (req) => {
-    // Skip rate limiting for health checks
     return req.url === '/health' || req.url === '/';
   }
 });
 
-// Stricter rate limiting for authentication endpoints
+// FIXED: Less restrictive auth rate limiting for better UX
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Only 5 authentication attempts per 15 minutes
+  max: 10, // FIXED: Increased from 5 to 10 for better UX
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   message: {
     success: false,
-    message: 'Too many authentication attempts, please try again later',
-    code: 'AUTH_RATE_LIMIT_ERROR'
+    message: 'Too many authentication attempts, please try again in 15 minutes',
+    code: 'AUTH_RATE_LIMIT_ERROR',
+    retryAfter: '15 minutes'
   }
 });
 
 // Apply rate limiting
 app.use('/api/', generalLimiter);
 
-// --- MongoDB Database Connection ---
+// --- Enhanced MongoDB Database Connection ---
 const connectDB = async () => {
   try {
     const options = {
       // Core connection pool settings
       maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
       minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE) || 5,
-      // Timeout settings (well supported)
+      // Timeout settings
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
       connectTimeoutMS: 30000,
       // Write concern and reliability
       retryWrites: true,
-      w: 'majority'
+      w: 'majority',
+      // ENHANCED: Additional monitoring options
+      monitorCommands: process.env.NODE_ENV !== 'production'
     };
 
     await mongoose.connect(process.env.ATLAS_URI, options);
@@ -225,54 +245,71 @@ mongoose.connection.on('reconnected', () => {
 
 // --- API Routes ---
 
-// Root endpoint
+// Root endpoint with enhanced information
 app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'SarkariSuccess-Hub API is running!',
-    version: '2.1',
+    version: '2.2', // Updated version
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    requestId: req.id
   });
 });
 
-// Health check endpoint
+// ENHANCED: More detailed health check endpoint
 app.get('/health', (req, res) => {
   const dbState = mongoose.connection.readyState;
   const dbStatus = dbState === 1 ? 'connected' : 'disconnected';
   
-  res.json({
+  const healthStatus = {
     success: true,
-    status: 'healthy',
-    database: dbStatus,
-    uptime: process.uptime(),
+    status: dbState === 1 ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
-    version: '2.1'
-  });
+    version: '2.2',
+    requestId: req.id,
+    services: {
+      database: {
+        status: dbStatus,
+        readyState: dbState,
+        host: process.env.ATLAS_URI ? 'configured' : 'not configured'
+      },
+      server: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        environment: process.env.NODE_ENV || 'development'
+      }
+    }
+  };
+
+  const statusCode = dbState === 1 ? 200 : 503;
+  res.status(statusCode).json(healthStatus);
 });
 
 // Apply auth rate limiting to authentication routes
 app.use('/api/users/login', authLimiter);
 app.use('/api/users/register', authLimiter);
+app.use('/api/users/refresh', authLimiter);
 
-// ✅ FIXED: Mount routes correctly under /api
+// Mount routes
 app.use('/api/users', userRoutes);
 app.use('/api/ai', aiRoutes);
 
 // Log mounted routes for debugging
 console.log('🚀 API Routes mounted:');
-console.log('  - /api/users (authentication & user management)');
-console.log('  - /api/ai (AI-powered features)');
+console.log(' - /api/users (authentication & user management)');
+console.log(' - /api/ai (AI-powered features)');
 
 // --- Enhanced Error Handling Middleware ---
 
-// 404 handler
+// 404 handler with sanitized response
 app.use((req, res) => {
-  console.log(`❌ 404 Not Found: ${req.method} ${req.url}`);
+  console.log(`❌ 404 Not Found: ${req.method} ${req.url} [${req.id}]`);
   res.status(404).json({
     success: false,
     message: 'Route not found. Please check the API documentation for valid endpoints.',
     timestamp: new Date().toISOString(),
+    requestId: req.id,
     availableRoutes: [
       'GET /',
       'GET /health',
@@ -285,11 +322,12 @@ app.use((req, res) => {
   });
 });
 
-// Global error handler with security considerations
+// ENHANCED: Global error handler with better security and logging
 app.use((err, req, res, next) => {
-  // Log error details securely
-  const errorId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+  // Generate error ID for tracking
+  const errorId = `${req.id || Date.now().toString(36)}-${Math.random().toString(36).substr(2)}`;
   
+  // Enhanced error logging
   console.error(`❌ Error [${errorId}]:`, {
     message: err.message,
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
@@ -297,26 +335,34 @@ app.use((err, req, res, next) => {
     method: req.method,
     ip: req.ip,
     userAgent: req.get('User-Agent'),
-    timestamp: new Date().toISOString()
+    requestId: req.id,
+    timestamp: new Date().toISOString(),
+    userId: req.user?.id || 'anonymous'
   });
 
   // Determine error status and message
   const status = err.status || err.statusCode || 500;
   let message;
 
+  // FIXED: Sanitize error messages to prevent information disclosure
   if (status >= 500) {
     message = process.env.NODE_ENV === 'production'
       ? 'Internal Server Error'
       : err.message;
   } else {
+    // Sanitize client error messages
     message = err.message || 'Bad Request';
+    // Remove sensitive information patterns
+    message = message.replace(/mongodb|mongoose|database|connection/gi, 'system');
+    message = message.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, 'server');
   }
 
   res.status(status).json({
     success: false,
     message,
-    errorId: process.env.NODE_ENV === 'production' ? errorId : undefined,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    requestId: req.id,
+    ...(process.env.NODE_ENV !== 'production' && { errorId })
   });
 });
 
@@ -325,35 +371,47 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 SarkariSuccess-Hub API running on port ${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health Check: http://localhost:${PORT}/health`);
-  
+
   // Show OpenAI integration status
   const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
   console.log(`🤖 OpenAI Integration: ${hasOpenAIKey ? '✅ Configured' : '❌ Missing API Key'}`);
 });
 
-// Graceful shutdown handling
+// Enhanced graceful shutdown handling
+const gracefulShutdown = (signal) => {
+  console.log(`⚠️ ${signal} received. Shutting down gracefully...`);
+  
+  server.close((err) => {
+    if (err) {
+      console.error('❌ Error during server shutdown:', err);
+    } else {
+      console.log('✅ Server closed successfully');
+    }
+    
+    mongoose.connection.close(false, () => {
+      console.log('✅ MongoDB connection closed');
+      process.exit(err ? 1 : 0);
+    });
+  });
+
+  // Force exit if graceful shutdown takes too long
+  setTimeout(() => {
+    console.error('❌ Forced shutdown after 10 seconds');
+    process.exit(1);
+  }, 10000);
+};
+
 process.on('unhandledRejection', (err) => {
   console.error('❌ Unhandled Promise Rejection:', err);
-  server.close(() => {
-    process.exit(1);
-  });
+  gracefulShutdown('UNHANDLED_REJECTION');
 });
 
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
-  server.close(() => {
-    process.exit(1);
-  });
+  gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
 
-process.on('SIGTERM', () => {
-  console.log('⚠️ SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
-    mongoose.connection.close(false, () => {
-      console.log('✅ MongoDB connection closed.');
-      process.exit(0);
-    });
-  });
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 module.exports = { app, server };
