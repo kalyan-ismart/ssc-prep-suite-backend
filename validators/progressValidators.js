@@ -1,5 +1,5 @@
 const { body, param, validationResult } = require('express-validator');
-const validator = require('validator');
+const { body, validationResult } = require('express-validator');s
 
 /**
  * ENHANCED: Middleware to run validationResult and return sanitized errors.

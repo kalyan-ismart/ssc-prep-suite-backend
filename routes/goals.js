@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
-const validator = require('validator');
+const { body, validationResult } = require('express-validator');
 const Goal = require('../models/goal.model');
 const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
