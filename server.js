@@ -98,13 +98,26 @@ if (process.env.NODE_ENV !== 'production') {
 
 console.log('🌐 CORS Allowed Origins:', allowedOrigins);
 
+// Define public paths that should allow no-origin requests
+const publicPaths = ['/', '/health'];
+
 const corsOptions = {
     origin: (origin, callback) => {
+        // Get the request object from the callback context
+        const req = callback.req || this?.req;
+        
+        // Allow no-origin requests for public paths
         if (!origin) {
+            if (req && publicPaths.includes(req.path)) {
+                console.log('✅ Allowing no-origin request for public path:', req.path);
+                return callback(null, true);
+            }
+            
             if (process.env.NODE_ENV === 'production') {
-                console.warn('🚫 CORS blocked no-origin request in production');
+                console.warn('🚫 CORS blocked no-origin request in production for:', req?.path || 'unknown path');
                 return callback(new Error('No-origin requests not allowed in production'));
             }
+            
             return callback(null, true);
         }
         
@@ -122,8 +135,19 @@ const corsOptions = {
     exposedHeaders: ['X-Request-ID']
 };
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+// Custom CORS middleware to provide request context
+app.use((req, res, next) => {
+    const corsHandler = cors(corsOptions);
+    // Attach request to the callback for context
+    corsHandler.req = req;
+    corsHandler(req, res, next);
+});
+
+app.options('*', (req, res, next) => {
+    const corsHandler = cors(corsOptions);
+    corsHandler.req = req;
+    corsHandler(req, res, next);
+});
 
 app.use(helmet({
     contentSecurityPolicy: {
