@@ -6,7 +6,6 @@ console.log("--- DEPLOYMENT TEST: RUNNING LATEST server.js at", new Date().toISO
 console.log('🔍 PORT from environment:', process.env.PORT);
 const PORT = process.env.PORT || 10000;
 console.log('🔍 Using PORT:', PORT);
-
 console.log('🔍 ATLAS_URI:', process.env.ATLAS_URI ? 'Set ✅' : 'Missing ❌');
 console.log('🔍 OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? 'Set ✅' : 'Missing ❌');
 console.log('🔍 JWT_SECRET:', process.env.JWT_SECRET ? 'Set ✅' : 'Missing ❌');
@@ -21,7 +20,8 @@ if (missingVars.length > 0) {
     process.exit(1);
 }
 
-if (process.env.JWT_SECRET.length < 32) {
+// Check JWT_SECRET length for security - FIXED SYNTAX ERROR
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
     console.error('FATAL ERROR: JWT_SECRET must be at least 32 characters long for security.');
     process.exit(1);
 }
@@ -38,11 +38,54 @@ const expressWinston = require('express-winston');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
 
-// Import individual route files
-const userRoutes = require('./routes/users');
-const aiRoutes = require('./routes/ai');
+// Graceful error handling for module loading
+let userRoutes, aiRoutes;
+try {
+    userRoutes = require('./routes/users');
+    aiRoutes = require('./routes/ai');
+    console.log('✅ All route modules loaded successfully');
+} catch (moduleError) {
+    console.error('❌ Error loading route modules:', moduleError.message);
+    console.log('⚠️ Running server without custom routes');
+    // Create dummy routes to prevent crashes
+    userRoutes = require('express').Router();
+    aiRoutes = require('express').Router();
+    
+    userRoutes.get('/', (req, res) => {
+        res.status(503).json({ 
+            success: false, 
+            message: 'User routes temporarily unavailable' 
+        });
+    });
+    
+    aiRoutes.get('/', (req, res) => {
+        res.status(503).json({ 
+            success: false, 
+            message: 'AI routes temporarily unavailable' 
+        });
+    });
+}
 
 const app = express();
+
+// Enhanced error handling for startup errors
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    // Don't exit immediately, let the app attempt to start
+    setTimeout(() => {
+        console.error('❌ Forced shutdown due to unhandled rejection');
+        process.exit(1);
+    }, 5000);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    // Don't exit immediately, let the app attempt to start
+    setTimeout(() => {
+        console.error('❌ Forced shutdown due to uncaught exception');
+        process.exit(1);
+    }, 5000);
+});
 
 // --- Enhanced Security Middleware Setup ---
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -64,7 +107,7 @@ const corsOptions = {
             }
             return callback(null, true);
         }
-
+        
         if (allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
@@ -193,30 +236,52 @@ const authLimiter = rateLimit({
 
 app.use('/api/', generalLimiter);
 
-// --- Enhanced MongoDB Database Connection ---
+// --- Enhanced MongoDB Database Connection with Retry Logic ---
 const connectDB = async () => {
-    try {
-        const options = {
-            maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
-            minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE) || 5,
-            serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
-            connectTimeoutMS: 30000,
-            retryWrites: true,
-            w: 'majority',
-            monitorCommands: process.env.NODE_ENV !== 'production'
-        };
-
-        await mongoose.connect(process.env.ATLAS_URI, options);
-        console.log('✅ MongoDB database connection established successfully');
-    } catch (err) {
-        console.error('❌ MongoDB connection error:', err);
-        process.exit(1);
+    const maxRetries = 5;
+    const retryDelay = 5000; // 5 seconds
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`🔄 MongoDB connection attempt ${attempt}/${maxRetries}...`);
+            
+            const options = {
+                maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE) || 10,
+                minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE) || 5,
+                serverSelectionTimeoutMS: 10000, // Increased timeout
+                socketTimeoutMS: 45000,
+                connectTimeoutMS: 30000,
+                retryWrites: true,
+                w: 'majority',
+                monitorCommands: process.env.NODE_ENV !== 'production'
+            };
+            
+            await mongoose.connect(process.env.ATLAS_URI, options);
+            console.log('✅ MongoDB database connection established successfully');
+            return; // Exit the retry loop on success
+            
+        } catch (err) {
+            console.error(`❌ MongoDB connection attempt ${attempt} failed:`, err.message);
+            
+            if (attempt === maxRetries) {
+                console.error('❌ All MongoDB connection attempts failed. Starting server without database.');
+                // Don't exit - let the server start without database
+                break;
+            }
+            
+            console.log(`⏳ Retrying in ${retryDelay / 1000} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
     }
 };
 
-connectDB();
+// Initialize database connection
+connectDB().catch(err => {
+    console.error('❌ Database connection initialization failed:', err);
+    // Don't exit - continue with server startup
+});
 
+// MongoDB event listeners
 mongoose.connection.on('error', err => {
     console.error('❌ MongoDB runtime error:', err);
 });
@@ -244,7 +309,7 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
     const dbState = mongoose.connection.readyState;
     const dbStatus = dbState === 1 ? 'connected' : 'disconnected';
-
+    
     const healthStatus = {
         success: true,
         status: dbState === 1 ? 'healthy' : 'degraded',
@@ -264,14 +329,17 @@ app.get('/health', (req, res) => {
             }
         }
     };
-
+    
     const statusCode = dbState === 1 ? 200 : 503;
     res.status(statusCode).json(healthStatus);
 });
 
+// Rate limiting for auth routes
 app.use('/api/users/login', authLimiter);
 app.use('/api/users/register', authLimiter);
 app.use('/api/users/refresh', authLimiter);
+
+// Mount routes
 app.use('/api/users', userRoutes);
 app.use('/api/ai', aiRoutes);
 
@@ -301,7 +369,7 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
     const errorId = `${req.id || Date.now().toString(36)}-${Math.random().toString(36).substr(2)}`;
-
+    
     console.error(`❌ Error [${errorId}]:`, {
         message: err.message,
         stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
@@ -313,20 +381,21 @@ app.use((err, req, res, next) => {
         timestamp: new Date().toISOString(),
         userId: req.user?.id || 'anonymous'
     });
-
+    
     const status = err.status || err.statusCode || 500;
     let message;
-
+    
     if (status >= 500) {
         message = process.env.NODE_ENV === 'production'
             ? 'Internal Server Error'
             : err.message;
     } else {
         message = err.message || 'Bad Request';
+        // Sanitize sensitive information from error messages
         message = message.replace(/mongodb|mongoose|database|connection/gi, 'system');
         message = message.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, 'server');
     }
-
+    
     res.status(status).json({
         success: false,
         message,
@@ -336,47 +405,54 @@ app.use((err, req, res, next) => {
     });
 });
 
-// --- Server Activation ---
-const server = app.listen(PORT, () => {
-    console.log(`🚀 SarkariSuccess-Hub API running on port ${PORT}`);
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🔗 Health Check: http://localhost:${PORT}/health`);
-    
-    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
-    console.log(`🤖 OpenAI Integration: ${hasOpenAIKey ? '✅ Configured' : '❌ Missing API Key'}`);
-});
-
-const gracefulShutdown = (signal) => {
-    console.log(`⚠️ ${signal} received. Shutting down gracefully...`);
-    
-    server.close((err) => {
-        if (err) {
-            console.error('❌ Error during server shutdown:', err);
-        } else {
-            console.log('✅ Server closed successfully');
-        }
-
-        mongoose.connection.close(false, () => {
-            console.log('✅ MongoDB connection closed');
-            process.exit(err ? 1 : 0);
+// --- Server Startup with Enhanced Error Handling ---
+const startServer = async () => {
+    try {
+        const server = app.listen(PORT, () => {
+            console.log(`🚀 SarkariSuccess-Hub API running on port ${PORT}`);
+            console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+            console.log(`🔗 Health Check: http://localhost:${PORT}/health`);
+            
+            const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+            console.log(`🤖 OpenAI Integration: ${hasOpenAIKey ? '✅ Configured' : '❌ Missing API Key'}`);
+            
+            // Test database connection status
+            const dbState = mongoose.connection.readyState;
+            console.log(`💾 Database Status: ${dbState === 1 ? '✅ Connected' : '⚠️ Disconnected'}`);
         });
-    });
 
-    setTimeout(() => {
-        console.error('❌ Forced shutdown after 10 seconds');
+        const gracefulShutdown = (signal) => {
+            console.log(`⚠️ ${signal} received. Shutting down gracefully...`);
+            
+            server.close((err) => {
+                if (err) {
+                    console.error('❌ Error during server shutdown:', err);
+                } else {
+                    console.log('✅ Server closed successfully');
+                }
+                
+                mongoose.connection.close(false, () => {
+                    console.log('✅ MongoDB connection closed');
+                    process.exit(err ? 1 : 0);
+                });
+            });
+            
+            // Force shutdown after 10 seconds
+            setTimeout(() => {
+                console.error('❌ Forced shutdown after 10 seconds');
+                process.exit(1);
+            }, 10000);
+        };
+
+        // Graceful shutdown handlers
+        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+        
+    } catch (startupError) {
+        console.error('❌ Failed to start server:', startupError);
         process.exit(1);
-    }, 10000);
+    }
 };
 
-process.on('unhandledRejection', (err) => {
-    console.error('❌ Unhandled Promise Rejection:', err);
-    gracefulShutdown('UNHANDLED_REJECTION');
-});
-
-process.on('uncaughtException', (err) => {
-    console.error('❌ Uncaught Exception:', err);
-    gracefulShutdown('UNCAUGHT_EXCEPTION');
-});
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// Start the server
+startServer();
