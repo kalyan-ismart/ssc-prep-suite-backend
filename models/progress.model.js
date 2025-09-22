@@ -3,126 +3,115 @@
 const mongoose = require('mongoose');
 
 const progressSchema = new mongoose.Schema({
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    unique: true
-  },
-  
-  totalStudyTime: {
-    type: Number, // in minutes
-    default: 0,
-    min: 0
-  },
-  
-  averageScore: {
-    type: Number, // percentage (0-100)
-    default: 0,
-    min: 0,
-    max: 100
-  },
-  
-  quizzesTaken: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  
-  questionsAnswered: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  
-  correctAnswers: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  
-  streak: {
-    currentStreak: {
-      type: Number,
-      default: 0,
-      min: 0
+    user: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+        unique: true
     },
-    longestStreak: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    lastStudyDate: {
-      type: Date,
-      default: null
-    }
-  },
-  
-  subjectProgress: [{
-    subject: {
-      type: String,
-      required: true
-    },
-    totalQuestions: {
-      type: Number,
-      default: 0
-    },
-    correctAnswers: {
-      type: Number,
-      default: 0
+    totalStudyTime: {
+        type: Number, // in minutes
+        default: 0,
+        min: 0
     },
     averageScore: {
-      type: Number,
-      default: 0
+        type: Number, // percentage (0-100)
+        default: 0,
+        min: 0,
+        max: 100
     },
-    timeSpent: {
-      type: Number, // in minutes
-      default: 0
+    quizzesTaken: {
+        type: Number,
+        default: 0,
+        min: 0
     },
-    lastAttempted: {
-      type: Date,
-      default: null
+    questionsAnswered: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    correctAnswers: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    streak: {
+        currentStreak: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+        longestStreak: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+        lastStudyDate: {
+            type: Date,
+            default: null
+        }
+    },
+    subjectProgress: [{
+        subject: {
+            type: String,
+            required: true
+        },
+        totalQuestions: {
+            type: Number,
+            default: 0
+        },
+        correctAnswers: {
+            type: Number,
+            default: 0
+        },
+        averageScore: {
+            type: Number,
+            default: 0
+        },
+        timeSpent: {
+            type: Number, // in minutes
+            default: 0
+        },
+        lastAttempted: {
+            type: Date,
+            default: null
+        }
+    }],
+    weeklyGoals: {
+        studyTime: {
+            type: Number, // in minutes
+            default: 420 // 7 hours per week
+        },
+        quizzes: {
+            type: Number,
+            default: 10
+        }
+    },
+    achievements: [{
+        name: {
+            type: String,
+            required: true
+        },
+        description: {
+            type: String,
+            required: true
+        },
+        unlockedAt: {
+            type: Date,
+            default: Date.now
+        },
+        category: {
+            type: String,
+            enum: ['streak', 'score', 'time', 'quiz', 'special'],
+            required: true
+        }
+    }],
+    lastActivity: {
+        type: Date,
+        default: Date.now
     }
-  }],
-  
-  weeklyGoals: {
-    studyTime: {
-      type: Number, // in minutes
-      default: 420 // 7 hours per week
-    },
-    quizzes: {
-      type: Number,
-      default: 10
-    }
-  },
-  
-  achievements: [{
-    name: {
-      type: String,
-      required: true
-    },
-    description: {
-      type: String,
-      required: true
-    },
-    unlockedAt: {
-      type: Date,
-      default: Date.now
-    },
-    category: {
-      type: String,
-      enum: ['streak', 'score', 'time', 'quiz', 'special'],
-      required: true
-    }
-  }],
-  
-  lastActivity: {
-    type: Date,
-    default: Date.now
-  }
-  
 }, {
-  timestamps: true
+    timestamps: true
 });
 
 // Indexes
@@ -132,64 +121,138 @@ progressSchema.index({ 'streak.currentStreak': -1 });
 
 // Virtual for accuracy rate
 progressSchema.virtual('accuracyRate').get(function() {
-  if (this.questionsAnswered === 0) return 0;
-  return Math.round((this.correctAnswers / this.questionsAnswered) * 100);
+    if (this.questionsAnswered === 0) return 0;
+    return Math.round((this.correctAnswers / this.questionsAnswered) * 100);
 });
 
 // Method to update study time
 progressSchema.methods.addStudyTime = function(minutes) {
-  this.totalStudyTime += minutes;
-  this.lastActivity = new Date();
-  return this.save();
+    this.totalStudyTime += minutes;
+    this.lastActivity = new Date();
+    return this.save();
 };
 
 // Method to update quiz stats
 progressSchema.methods.addQuizResult = function(score, questionsCount, correctCount, timeSpent) {
-  this.quizzesTaken += 1;
-  this.questionsAnswered += questionsCount;
-  this.correctAnswers += correctCount;
-  
-  // Recalculate average score
-  this.averageScore = Math.round(
-    ((this.averageScore * (this.quizzesTaken - 1)) + score) / this.quizzesTaken
-  );
-  
-  if (timeSpent) {
-    this.totalStudyTime += timeSpent;
-  }
-  
-  this.lastActivity = new Date();
-  return this.save();
+    this.quizzesTaken += 1;
+    this.questionsAnswered += questionsCount;
+    this.correctAnswers += correctCount;
+    
+    // Recalculate average score
+    this.averageScore = Math.round(
+        ((this.averageScore * (this.quizzesTaken - 1)) + score) / this.quizzesTaken
+    );
+    
+    if (timeSpent) {
+        this.totalStudyTime += timeSpent;
+    }
+    
+    this.lastActivity = new Date();
+    return this.save();
 };
 
 // Method to update streak
 progressSchema.methods.updateStreak = function() {
-  const today = new Date();
-  const lastStudyDate = this.streak.lastStudyDate;
-  
-  if (!lastStudyDate) {
-    // First study session
-    this.streak.currentStreak = 1;
-    this.streak.longestStreak = 1;
-  } else {
-    const diffTime = Math.abs(today - lastStudyDate);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const today = new Date();
+    const lastStudyDate = this.streak.lastStudyDate;
     
-    if (diffDays === 1) {
-      // Consecutive day
-      this.streak.currentStreak += 1;
-      if (this.streak.currentStreak > this.streak.longestStreak) {
-        this.streak.longestStreak = this.streak.currentStreak;
-      }
-    } else if (diffDays > 1) {
-      // Streak broken
-      this.streak.currentStreak = 1;
+    if (!lastStudyDate) {
+        // First study session
+        this.streak.currentStreak = 1;
+        this.streak.longestStreak = 1;
+    } else {
+        const diffTime = Math.abs(today - lastStudyDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (diffDays === 1) {
+            // Consecutive day
+            this.streak.currentStreak += 1;
+            if (this.streak.currentStreak > this.streak.longestStreak) {
+                this.streak.longestStreak = this.streak.currentStreak;
+            }
+        } else if (diffDays > 1) {
+            // Streak broken
+            this.streak.currentStreak = 1;
+        }
+        // If same day, don't update streak count
     }
-    // If same day, don't update streak count
-  }
-  
-  this.streak.lastStudyDate = today;
-  return this.save();
+    
+    this.streak.lastStudyDate = today;
+    return this.save();
+};
+
+// Method to add subject progress
+progressSchema.methods.updateSubjectProgress = function(subject, correct, total, timeSpent) {
+    let subjectIndex = this.subjectProgress.findIndex(s => s.subject === subject);
+    
+    if (subjectIndex === -1) {
+        // New subject
+        this.subjectProgress.push({
+            subject: subject,
+            totalQuestions: total,
+            correctAnswers: correct,
+            averageScore: Math.round((correct / total) * 100),
+            timeSpent: timeSpent || 0,
+            lastAttempted: new Date()
+        });
+    } else {
+        // Update existing subject
+        const subjectProgress = this.subjectProgress[subjectIndex];
+        subjectProgress.totalQuestions += total;
+        subjectProgress.correctAnswers += correct;
+        subjectProgress.averageScore = Math.round(
+            (subjectProgress.correctAnswers / subjectProgress.totalQuestions) * 100
+        );
+        subjectProgress.timeSpent += timeSpent || 0;
+        subjectProgress.lastAttempted = new Date();
+    }
+    
+    return this.save();
+};
+
+// Method to add achievement
+progressSchema.methods.addAchievement = function(name, description, category) {
+    // Check if achievement already exists
+    const exists = this.achievements.some(achievement => achievement.name === name);
+    
+    if (!exists) {
+        this.achievements.push({
+            name: name,
+            description: description,
+            category: category,
+            unlockedAt: new Date()
+        });
+        return this.save();
+    }
+    
+    return Promise.resolve(this);
+};
+
+// Static method to get user progress statistics
+progressSchema.statics.getProgressStats = async function(userId) {
+    const progress = await this.findOne({ user: userId });
+    
+    if (!progress) {
+        return {
+            totalStudyTime: 0,
+            averageScore: 0,
+            quizzesTaken: 0,
+            accuracyRate: 0,
+            currentStreak: 0,
+            longestStreak: 0,
+            achievements: []
+        };
+    }
+    
+    return {
+        totalStudyTime: progress.totalStudyTime,
+        averageScore: progress.averageScore,
+        quizzesTaken: progress.quizzesTaken,
+        accuracyRate: progress.accuracyRate,
+        currentStreak: progress.streak.currentStreak,
+        longestStreak: progress.streak.longestStreak,
+        achievements: progress.achievements
+    };
 };
 
 module.exports = mongoose.model('Progress', progressSchema);
