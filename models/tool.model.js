@@ -1,82 +1,87 @@
-// models/tool.model.js
-const mongoose = require('mongoose');
-const Schema = mongoose.Schema;
+// models/tool.model.js - Tool Model
 
-/**
- * Tool Schema for SarkariSuccess-Hub
- * Supports categories, types, tags, usage tracking.
- */
-const toolSchema = new Schema({
+const mongoose = require('mongoose');
+
+const toolSchema = new mongoose.Schema({
   name: {
     type: String,
     required: true,
     trim: true,
-    maxlength: 100,
-    unique: true, // Implicitly creates an index
+    maxlength: 100
   },
+  
   description: {
     type: String,
     required: true,
-    maxlength: 500,
+    trim: true,
+    maxlength: 500
   },
+  
   category: {
-    type: Schema.Types.ObjectId,
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'Category',
-    required: true,
-    index: true, // Field-level index
+    required: true
   },
+  
   toolType: {
     type: String,
-    enum: [
-      'analytics',
-      'quiz',
-      'planner',
-      'calculator',
-      'tracker',
-      'ai-assistant',
-      'simulator',
-      'database',
-      'practice',
-      'assessment',
-      'utility',
-      'interactive',
-    ],
     required: true,
-    index: true, // Field-level index
+    enum: [
+      'analytics', 'quiz', 'planner', 'calculator', 
+      'tracker', 'ai-assistant', 'simulator', 
+      'database', 'practice', 'assessment', 
+      'utility', 'interactive'
+    ]
   },
+  
   icon: {
     type: String,
-    default: '🔧',
+    trim: true
   },
+  
+  url: {
+    type: String,
+    trim: true
+  },
+  
   isActive: {
     type: Boolean,
-    default: true,
-    index: true, // Field-level index
+    default: true
   },
+  
   settings: {
-    type: Schema.Types.Mixed,
-    default: {},
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   },
-  tags: [
-    {
-      type: String,
-      maxlength: 30,
-      index: true, // Field-level index
-    },
-  ],
+  
+  tags: [String],
+  
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  
   usageCount: {
     type: Number,
-    default: 0,
+    default: 0
   },
+  
   rating: {
     type: Number,
-    min: 0,
-    max: 5,
     default: 0,
-  },
+    min: 0,
+    max: 5
+  }
+  
 }, {
-  timestamps: true,
+  timestamps: true
 });
 
-// No explicit schema.index() calls needed, as indexes are defined at the field level
+// Indexes
+toolSchema.index({ category: 1 });
+toolSchema.index({ toolType: 1 });
+toolSchema.index({ isActive: 1 });
+toolSchema.index({ createdBy: 1 });
+
 module.exports = mongoose.model('Tool', toolSchema);

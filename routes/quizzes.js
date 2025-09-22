@@ -1,8 +1,8 @@
-// routes/quizzes.js
+// routes/quizzes.js 
 
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
-const { body, validationResult } = require('express-validator');
+const validator = require('validator'); // FIXED: Added missing import
 const Quiz = require('../models/quiz.model');
 const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
@@ -17,41 +17,50 @@ const validateQuiz = [
     .isLength({ min: 1, max: 100 })
     .withMessage('Title must be 1-100 characters')
     .customSanitizer((value) => validator.escape(value)),
+
   body('questions')
     .optional()
     .isArray()
     .withMessage('Questions must be an array'),
+
   body('questions.*.questionText')
     .optional()
     .isString()
     .trim()
     .withMessage('Question text must be a string')
     .customSanitizer((value) => validator.escape(value)),
+
   body('questions.*.options')
     .optional()
     .isArray()
     .withMessage('Options must be an array'),
+
   body('questions.*.options.*.text')
     .optional()
     .isString()
     .trim()
     .withMessage('Option text must be a string')
     .customSanitizer((value) => validator.escape(value)),
+
   body('questions.*.options.*.isCorrect')
     .optional()
     .isBoolean()
     .withMessage('isCorrect must be a boolean'),
+
   body('category')
     .isMongoId()
     .withMessage('Valid category ID is required'),
+
   body('difficulty')
     .optional()
     .isIn(['easy', 'medium', 'hard'])
     .withMessage('Invalid difficulty level'),
+
   body('isActive')
     .optional()
     .isBoolean()
     .withMessage('isActive must be a boolean'),
+
   body('timeLimit')
     .optional()
     .isInt({ min: 1, max: 300 })
@@ -63,24 +72,29 @@ const validateQuizQuery = [
     .optional()
     .isMongoId()
     .withMessage('Valid category ID is required'),
+
   query('difficulty')
     .optional()
     .isIn(['easy', 'medium', 'hard'])
     .withMessage('Invalid difficulty level'),
+
   query('search')
     .optional()
     .isString()
     .isLength({ max: 100 })
     .withMessage('Search query too long')
     .customSanitizer((value) => validator.escape(value)),
+
   query('page')
     .optional()
     .isInt({ min: 1, max: 1000 })
     .withMessage('Page must be between 1 and 1000'),
+
   query('limit')
     .optional()
     .isInt({ min: 1, max: 50 })
     .withMessage('Limit must be between 1 and 50'),
+
   query('active')
     .optional()
     .isBoolean()
@@ -146,6 +160,7 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
         hasPrev: page > 1
       }
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -163,6 +178,7 @@ router.get('/:id', [
 
   try {
     const filter = { _id: req.params.id };
+
     // Non-admin users can only see active quizzes
     if (!req.user || req.user.role !== 'admin') {
       filter.isActive = true;
@@ -179,6 +195,7 @@ router.get('/:id', [
     }
 
     res.json({ success: true, data: quiz });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -193,9 +210,10 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
 
   try {
     // Check if title already exists (case-insensitive)
-    const existingQuiz = await Quiz.findOne({ 
-      title: new RegExp(`^${req.body.title.trim()}$`, 'i') 
+    const existingQuiz = await Quiz.findOne({
+      title: new RegExp(`^${req.body.title.trim()}$`, 'i')
     });
+
     if (existingQuiz) {
       return errorResponse(res, 409, 'Quiz title already exists.');
     }
@@ -216,10 +234,10 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
       .select('-__v')
       .lean();
 
-    logSecurityEvent('QUIZ_CREATED', { 
-      quizId: quiz._id, 
-      title: quiz.title, 
-      createdBy: req.user.id 
+    logSecurityEvent('QUIZ_CREATED', {
+      quizId: quiz._id,
+      title: quiz.title,
+      createdBy: req.user.id
     }, req);
 
     res.status(201).json({
@@ -227,6 +245,7 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
       message: 'Quiz added successfully.',
       data: populatedQuiz
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -251,19 +270,20 @@ router.post('/update/:id', [
 
     // Check ownership - only admin or quiz creator can update
     if (req.user.role !== 'admin' && quiz.createdBy?.toString() !== req.user.id) {
-      logSecurityEvent('UNAUTHORIZED_QUIZ_UPDATE', { 
-        quizId: req.params.id, 
-        userId: req.user.id 
+      logSecurityEvent('UNAUTHORIZED_QUIZ_UPDATE', {
+        quizId: req.params.id,
+        userId: req.user.id
       }, req);
       return errorResponse(res, 403, 'You can only update quizzes you created.');
     }
 
     // Check for duplicate title if changing
     if (req.body.title && req.body.title.trim() !== quiz.title) {
-      const existingQuiz = await Quiz.findOne({ 
+      const existingQuiz = await Quiz.findOne({
         title: new RegExp(`^${req.body.title.trim()}$`, 'i'),
         _id: { $ne: req.params.id }
       });
+
       if (existingQuiz) {
         return errorResponse(res, 409, 'Quiz title already exists.');
       }
@@ -271,6 +291,7 @@ router.post('/update/:id', [
 
     // Update fields
     const updateData = { ...req.body, updatedAt: new Date() };
+
     // Only admin can change certain fields
     if (req.user.role !== 'admin') {
       delete updateData.isActive;
@@ -286,9 +307,9 @@ router.post('/update/:id', [
       .select('-__v')
       .lean();
 
-    logSecurityEvent('QUIZ_UPDATED', { 
-      quizId: req.params.id, 
-      updatedBy: req.user.id 
+    logSecurityEvent('QUIZ_UPDATED', {
+      quizId: req.params.id,
+      updatedBy: req.user.id
     }, req);
 
     res.json({
@@ -296,6 +317,7 @@ router.post('/update/:id', [
       message: 'Quiz updated successfully.',
       data: updatedQuiz
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -320,10 +342,10 @@ router.delete('/:id', [
 
     await Quiz.findByIdAndDelete(req.params.id);
 
-    logSecurityEvent('QUIZ_DELETED', { 
-      quizId: req.params.id, 
-      title: quiz.title, 
-      deletedBy: req.user.id 
+    logSecurityEvent('QUIZ_DELETED', {
+      quizId: req.params.id,
+      title: quiz.title,
+      deletedBy: req.user.id
     }, req);
 
     res.json({
@@ -335,6 +357,7 @@ router.delete('/:id', [
         deletedAt: new Date().toISOString()
       }
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -416,6 +439,7 @@ router.post('/:id/submit', [
         passed: score >= 60 // Assuming 60% is passing
       }
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -447,10 +471,10 @@ router.post('/:id/toggle', [
       .select('-__v')
       .lean();
 
-    logSecurityEvent('QUIZ_STATUS_TOGGLED', { 
-      quizId: quiz._id, 
-      newStatus: quiz.isActive, 
-      toggledBy: req.user.id 
+    logSecurityEvent('QUIZ_STATUS_TOGGLED', {
+      quizId: quiz._id,
+      newStatus: quiz.isActive,
+      toggledBy: req.user.id
     }, req);
 
     res.json({
@@ -458,6 +482,7 @@ router.post('/:id/toggle', [
       message: `Quiz ${quiz.isActive ? 'activated' : 'deactivated'} successfully.`,
       data: populatedQuiz
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }

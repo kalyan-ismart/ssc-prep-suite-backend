@@ -1,11 +1,14 @@
+// validators/progressValidators.js 
+
 const { body, param, validationResult } = require('express-validator');
-const { body, validationResult } = require('express-validator');s
+const validator = require('validator'); // FIXED: Added missing import
 
 /**
  * ENHANCED: Middleware to run validationResult and return sanitized errors.
  */
 const validate = (req, res, next) => {
   const errors = validationResult(req);
+  
   if (!errors.isEmpty()) {
     // ENHANCED: Sanitize error messages to prevent information disclosure
     const sanitizedErrors = errors.array().map(error => ({
@@ -21,6 +24,7 @@ const validate = (req, res, next) => {
       requestId: req.id
     });
   }
+
   return next();
 };
 
@@ -48,7 +52,7 @@ const validateProgressUpdate = [
     .customSanitizer((value) => {
       return validator.isMongoId(value) ? value : null;
     }),
-    
+
   body('timeSpent')
     .optional()
     .isInt({ min: 0, max: 1440 })
@@ -58,7 +62,7 @@ const validateProgressUpdate = [
       const num = parseInt(value);
       return (num >= 0 && num <= 1440) ? num : 0;
     }),
-    
+
   body('score')
     .optional()
     .isFloat({ min: 0, max: 100 })
@@ -67,7 +71,7 @@ const validateProgressUpdate = [
       const num = parseFloat(value);
       return (num >= 0 && num <= 100) ? num : 0;
     }),
-    
+
   body('streakData')
     .optional()
     .isObject()
@@ -78,37 +82,37 @@ const validateProgressUpdate = [
         const allowedKeys = ['currentStreak', 'longestStreak', 'lastStudyDate'];
         const keys = Object.keys(value);
         const invalidKeys = keys.filter(key => !allowedKeys.includes(key));
-        
+
         if (invalidKeys.length > 0) {
           throw new Error(`Invalid streak data fields: ${invalidKeys.join(', ')}`);
         }
-        
+
         // Validate individual streak fields
         if (value.currentStreak !== undefined && (!Number.isInteger(value.currentStreak) || value.currentStreak < 0)) {
           throw new Error('Current streak must be a non-negative integer');
         }
-        
+
         if (value.longestStreak !== undefined && (!Number.isInteger(value.longestStreak) || value.longestStreak < 0)) {
           throw new Error('Longest streak must be a non-negative integer');
         }
-        
+
         if (value.lastStudyDate !== undefined && !validator.isISO8601(value.lastStudyDate)) {
           throw new Error('Last study date must be a valid ISO date');
         }
       }
       return true;
     }),
-    
+
   body('streakData.currentStreak')
     .optional()
     .isInt({ min: 0, max: 365 })
     .withMessage('Current streak must be between 0 and 365 days'),
-    
+
   body('streakData.longestStreak')
     .optional()
     .isInt({ min: 0, max: 365 })
     .withMessage('Longest streak must be between 0 and 365 days'),
-    
+
   body('streakData.lastStudyDate')
     .optional()
     .isISO8601()
@@ -122,7 +126,7 @@ const validateProgressUpdate = [
       }
       return true;
     }),
-    
+
   validate,
 ];
 
@@ -136,7 +140,7 @@ const validateAnalyticsQuery = [
     .customSanitizer((value) => {
       return validator.isMongoId(value) ? value : null;
     }),
-    
+
   body('timeRange')
     .optional()
     .isIn(['7days', '30days', '90days', '1year'])
@@ -146,7 +150,7 @@ const validateAnalyticsQuery = [
       const validRanges = ['7days', '30days', '90days', '1year'];
       return validRanges.includes(value) ? value : '30days';
     }),
-    
+
   body('metrics')
     .optional()
     .isArray({ min: 0, max: 10 })
@@ -158,18 +162,18 @@ const validateAnalyticsQuery = [
           'studyTime', 'quizzes', 'scores', 'streak', 'progress',
           'accuracy', 'subjects', 'performance', 'goals', 'achievements'
         ];
-        
-        const invalidMetrics = metrics.filter(metric => 
+
+        const invalidMetrics = metrics.filter(metric =>
           !validMetrics.includes(metric) || typeof metric !== 'string'
         );
-        
+
         if (invalidMetrics.length > 0) {
           throw new Error(`Invalid metrics: ${invalidMetrics.join(', ')}`);
         }
       }
       return true;
     }),
-    
+
   body('startDate')
     .optional()
     .isISO8601()
@@ -180,18 +184,18 @@ const validateAnalyticsQuery = [
       const now = new Date();
       const maxPastDate = new Date();
       maxPastDate.setFullYear(now.getFullYear() - 2); // Max 2 years back
-      
+
       if (date > now) {
         throw new Error('Start date cannot be in the future');
       }
-      
+
       if (date < maxPastDate) {
         throw new Error('Start date cannot be more than 2 years ago');
       }
-      
+
       return true;
     }),
-    
+
   body('endDate')
     .optional()
     .isISO8601()
@@ -199,28 +203,28 @@ const validateAnalyticsQuery = [
     .custom((value, { req }) => {
       const endDate = new Date(value);
       const now = new Date();
-      
+
       if (endDate > now) {
         throw new Error('End date cannot be in the future');
       }
-      
+
       // ENHANCED: Validate end date is after start date
       if (req.body.startDate) {
         const startDate = new Date(req.body.startDate);
         if (endDate <= startDate) {
           throw new Error('End date must be after start date');
         }
-        
+
         // ENHANCED: Limit date range to prevent performance issues
         const daysDiff = (endDate - startDate) / (1000 * 60 * 60 * 24);
         if (daysDiff > 730) { // Max 2 years range
           throw new Error('Date range cannot exceed 2 years');
         }
       }
-      
+
       return true;
     }),
-    
+
   validate,
 ];
 
@@ -234,7 +238,7 @@ const validateQuizSubmission = [
     .customSanitizer((value) => {
       return validator.isMongoId(value) ? value : null;
     }),
-    
+
   body('answers')
     .isArray({ min: 1, max: 100 })
     .withMessage('Answers must be an array with 1-100 items')
@@ -244,11 +248,11 @@ const validateQuizSubmission = [
         if (typeof answer !== 'object' || !answer.questionId || answer.selectedOption === undefined) {
           throw new Error(`Invalid answer structure at index ${index}`);
         }
-        
+
         if (!validator.isMongoId(answer.questionId)) {
           throw new Error(`Invalid question ID at index ${index}`);
         }
-        
+
         // Sanitize answer content
         if (typeof answer.selectedOption === 'string') {
           answer.selectedOption = validator.escape(answer.selectedOption);
@@ -256,12 +260,12 @@ const validateQuizSubmission = [
       });
       return true;
     }),
-    
+
   body('timeSpent')
     .optional()
     .isInt({ min: 1, max: 7200 }) // Max 2 hours
     .withMessage('Time spent must be between 1 and 7200 seconds'),
-    
+
   body('startedAt')
     .optional()
     .isISO8601()
@@ -270,18 +274,18 @@ const validateQuizSubmission = [
       const startedAt = new Date(value);
       const now = new Date();
       const maxPastTime = new Date(now.getTime() - (8 * 60 * 60 * 1000)); // Max 8 hours ago
-      
+
       if (startedAt > now) {
         throw new Error('Started at cannot be in the future');
       }
-      
+
       if (startedAt < maxPastTime) {
         throw new Error('Quiz session too old (max 8 hours)');
       }
-      
+
       return true;
     }),
-    
+
   validate,
 ];
 
@@ -292,7 +296,7 @@ const sanitizeSearchQuery = (req, res, next) => {
   if (req.query.search) {
     // ENHANCED: Comprehensive search query sanitization
     req.query.search = validator.escape(req.query.search)
-      .replace(/[<>\"'%;()&+]/g, '') // Remove potentially dangerous characters
+      .replace(/[<>"'%;()&+]/g, '') // Remove potentially dangerous characters
       .trim()
       .substring(0, 100); // Limit length
   }
@@ -308,7 +312,7 @@ const sanitizeUserInput = (req, res, next) => {
       req.body[field] = validator.escape(req.body[field]).trim();
     }
   });
-  
+
   next();
 };
 

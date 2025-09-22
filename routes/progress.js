@@ -1,7 +1,8 @@
-// routes/progress.js - FIXED VERSION with Enhanced Security and Real Implementation
+// routes/progress.js 
 
 const express = require('express');
 const { validationResult } = require('express-validator');
+const validator = require('validator'); // FIXED: Added missing import
 const Progress = require('../models/progress.model');
 const User = require('../models/user.model');
 const Quiz = require('../models/quiz.model'); // Assuming quiz model exists
@@ -16,7 +17,7 @@ const findProgressSecurely = async (userId, populateFields = '') => {
   if (!validator.isMongoId(userId)) {
     throw new Error('Invalid user ID format');
   }
-  
+
   return Progress.findOne({ user: userId }).populate(populateFields).lean();
 };
 
@@ -54,6 +55,7 @@ router.get('/', [auth, adminAuth], asyncHandler(async (req, res) => {
       },
       timestamp: new Date().toISOString()
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -74,16 +76,17 @@ router.get('/user/:userId', [auth, ...validateUserId], asyncHandler(async (req, 
 
   try {
     const progress = await findProgressSecurely(req.params.userId, 'user');
-    
+
     if (!progress) {
       return errorResponse(res, 404, 'Progress not found.');
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: progress,
       timestamp: new Date().toISOString()
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -107,16 +110,16 @@ const calculateRealAnalytics = async (progress, userId) => {
 
     // Calculate weekly progress from real data
     const weeklyProgress = calculateWeeklyProgressReal(recentQuizzes, studyHistory);
-    
+
     // Calculate subject performance from quiz data
     const subjectPerformance = calculateSubjectPerformanceReal(recentQuizzes);
-    
+
     // Calculate streak from real activity data
     const streakAnalysis = calculateStreakAnalysisReal(progress, recentQuizzes);
-    
+
     // Calculate study patterns from real data
     const studyPatterns = calculateStudyPatternsReal(recentQuizzes, studyHistory);
-    
+
     // Generate improvement suggestions based on real performance
     const improvements = generateImprovementSuggestionsReal(progress, subjectPerformance);
 
@@ -137,6 +140,7 @@ const calculateRealAnalytics = async (progress, userId) => {
       studyPatterns,
       improvements
     };
+
   } catch (error) {
     console.error('Analytics calculation error:', error);
     throw error;
@@ -147,7 +151,7 @@ const calculateRealAnalytics = async (progress, userId) => {
 function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
   const weekData = {};
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  
+
   // Initialize week data
   daysOfWeek.forEach(day => {
     weekData[day] = { studyTime: 0, quizzes: 0, scores: [] };
@@ -159,7 +163,7 @@ function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
       quiz.submissions.forEach(submission => {
         const submissionDate = new Date(submission.submittedAt);
         const dayName = submissionDate.toLocaleDateString('en-US', { weekday: 'long' });
-        
+
         if (weekData[dayName]) {
           weekData[dayName].quizzes++;
           weekData[dayName].scores.push(submission.score || 0);
@@ -174,7 +178,7 @@ function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
     day: day.substring(0, 3), // Mon, Tue, etc.
     studyTime: Math.round(weekData[day].studyTime / 60), // Convert to minutes
     quizzes: weekData[day].quizzes,
-    averageScore: weekData[day].scores.length > 0 
+    averageScore: weekData[day].scores.length > 0
       ? Math.round(weekData[day].scores.reduce((a, b) => a + b, 0) / weekData[day].scores.length)
       : 0
   }));
@@ -223,7 +227,7 @@ function calculateSubjectPerformanceReal(recentQuizzes) {
 // ENHANCED: Real streak analysis
 function calculateStreakAnalysisReal(progress, recentQuizzes) {
   const streakData = progress.streak || {};
-  const recentActivity = recentQuizzes.map(quiz => 
+  const recentActivity = recentQuizzes.map(quiz =>
     quiz.submissions?.map(sub => new Date(sub.submittedAt)) || []
   ).flat().sort((a, b) => b - a);
 
@@ -233,7 +237,7 @@ function calculateStreakAnalysisReal(progress, recentQuizzes) {
     streakGoal: 30,
     lastActivity: recentActivity[0] || null,
     streakHistory: calculateStreakHistory(recentActivity),
-    daysActive: new Set(recentActivity.map(date => 
+    daysActive: new Set(recentActivity.map(date =>
       date.toISOString().split('T')[0]
     )).size
   };
@@ -242,15 +246,16 @@ function calculateStreakAnalysisReal(progress, recentQuizzes) {
 // Helper function to calculate streak history
 function calculateStreakHistory(activityDates) {
   const history = [];
-  const uniqueDays = [...new Set(activityDates.map(date => 
+  const uniqueDays = [...new Set(activityDates.map(date =>
     date.toISOString().split('T')[0]
   ))].sort();
 
   let currentStreak = 0;
+
   for (let i = 0; i < uniqueDays.length; i++) {
     const currentDate = new Date(uniqueDays[i]);
     const prevDate = i > 0 ? new Date(uniqueDays[i - 1]) : null;
-    
+
     if (!prevDate || (currentDate - prevDate) / (1000 * 60 * 60 * 24) === 1) {
       currentStreak++;
     } else {
@@ -260,7 +265,7 @@ function calculateStreakHistory(activityDates) {
       currentStreak = 1;
     }
   }
-  
+
   if (currentStreak > 0) {
     history.push({ streak: currentStreak, endDate: new Date(uniqueDays[uniqueDays.length - 1]) });
   }
@@ -281,7 +286,7 @@ function calculateStudyPatternsReal(recentQuizzes, studyHistory) {
         const date = new Date(submission.submittedAt);
         const hour = date.getHours();
         const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-        
+
         hourCounts[hour]++;
         dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
         totalSessions++;
@@ -291,7 +296,7 @@ function calculateStudyPatternsReal(recentQuizzes, studyHistory) {
   });
 
   const preferredHour = hourCounts.indexOf(Math.max(...hourCounts));
-  const mostActiveDay = Object.keys(dayCounts).reduce((a, b) => 
+  const mostActiveDay = Object.keys(dayCounts).reduce((a, b) =>
     dayCounts[a] > dayCounts[b] ? a : b, 'Sunday'
   );
 
@@ -315,6 +320,7 @@ function getTimeOfDay(hour) {
 
 function calculateConsistency(recentQuizzes) {
   const uniqueDays = new Set();
+
   recentQuizzes.forEach(quiz => {
     if (quiz.submissions) {
       quiz.submissions.forEach(submission => {
@@ -323,7 +329,7 @@ function calculateConsistency(recentQuizzes) {
       });
     }
   });
-  
+
   const daysActive = uniqueDays.size;
   const totalDays = 30; // Consider last 30 days
   return Math.round((daysActive / totalDays) * 100);
@@ -420,7 +426,7 @@ router.get('/analytics/:userId', [auth, ...validateUserId], asyncHandler(async (
 
   try {
     const progress = await findProgressSecurely(req.params.userId, 'user');
-    
+
     if (!progress) {
       return errorResponse(res, 404, 'Progress not found.');
     }
@@ -438,12 +444,50 @@ router.get('/analytics/:userId', [auth, ...validateUserId], asyncHandler(async (
       data: analytics,
       generatedAt: new Date().toISOString()
     });
+
   } catch (error) {
     return handleDatabaseError(res, error);
   }
 }));
 
-// Continue with other routes using enhanced security...
-// The remaining routes (update, bulk-update) would follow similar patterns
+// @route POST /progress/update/:userId
+// @desc Update progress for a user
+// @access Private
+router.post('/update/:userId', [auth, ...validateProgressUpdate], asyncHandler(async (req, res) => {
+  // Authorization: User can update their own progress, or an admin can update any
+  if (req.user.id !== req.params.userId && req.user.role !== 'admin') {
+    logSecurityEvent('UNAUTHORIZED_PROGRESS_UPDATE', {
+      requesterId: req.user.id,
+      targetUserId: req.params.userId
+    }, req);
+    return errorResponse(res, 403, 'Not authorized to update this progress.');
+  }
+
+  try {
+    const updateData = { ...req.body, lastActivity: new Date() };
+    
+    const progress = await Progress.findOneAndUpdate(
+      { user: req.params.userId },
+      { $set: updateData },
+      { new: true, upsert: true, runValidators: true }
+    ).populate('user', 'username email fullName').lean();
+
+    logSecurityEvent('PROGRESS_UPDATED', {
+      userId: req.params.userId,
+      updatedBy: req.user.id,
+      fields: Object.keys(updateData)
+    }, req);
+
+    res.json({
+      success: true,
+      data: progress,
+      message: 'Progress updated successfully.',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    return handleDatabaseError(res, error);
+  }
+}));
 
 module.exports = router;

@@ -1,3 +1,5 @@
+// utils/errors.js 
+
 const winston = require('winston');
 const { validationResult } = require('express-validator');
 
@@ -24,18 +26,18 @@ const securityLogger = winston.createLogger({
     })
   ),
   transports: [
-    new winston.transports.File({ 
+    new winston.transports.File({
       filename: 'logs/security.log',
       maxsize: 10485760, // 10MB
       maxFiles: 5
     }),
-    new winston.transports.File({ 
-      filename: 'logs/error.log', 
+    new winston.transports.File({
+      filename: 'logs/error.log',
       level: 'error',
       maxsize: 10485760,
       maxFiles: 5
     }),
-    new winston.transports.Console({ 
+    new winston.transports.Console({
       format: winston.format.simple(),
       level: process.env.NODE_ENV === 'production' ? 'error' : 'info'
     }),
@@ -65,7 +67,7 @@ const asyncHandler = (fn) => (req, res, next) =>
       timestamp: new Date().toISOString(),
       requestId: req.id,
       userId: req.user?.id || 'anonymous',
-      body: process.env.NODE_ENV !== 'production' ? 
+      body: process.env.NODE_ENV !== 'production' ?
         JSON.stringify(req.body).substring(0, 500) : undefined,
       query: JSON.stringify(req.query),
       params: JSON.stringify(req.params)
@@ -81,7 +83,7 @@ const asyncHandler = (fn) => (req, res, next) =>
 const errorResponse = (res, statusCode, message, errors = []) => {
   // ENHANCED: Sanitize error messages to prevent information disclosure
   let sanitizedMessage = typeof message === 'string' ? message : 'An error occurred';
-  
+
   // Remove sensitive information patterns from error messages
   sanitizedMessage = sanitizedMessage
     .replace(/mongodb|mongoose|database|connection/gi, 'system')
@@ -206,8 +208,8 @@ const logSecurityEvent = (eventType, details, req = {}) => {
     severity: getSeverityLevel(eventType)
   };
 
-  const logLevel = securityEvent.severity === 'high' ? 'error' : 
-                  securityEvent.severity === 'medium' ? 'warn' : 'info';
+  const logLevel = securityEvent.severity === 'high' ? 'error' :
+    securityEvent.severity === 'medium' ? 'warn' : 'info';
 
   securityLogger[logLevel]('Security Event:', securityEvent);
 
@@ -251,10 +253,9 @@ const getSeverityLevel = (eventType) => {
 const sendSecurityAlert = (securityEvent) => {
   // In a real implementation, this would send alerts via:
   // - Email notifications
-  // - Slack/Teams webhooks  
+  // - Slack/Teams webhooks
   // - SMS alerts
   // - Third-party monitoring services (PagerDuty, etc.)
-  
   console.warn(`🚨 SECURITY ALERT: ${securityEvent.eventType}`, {
     details: securityEvent.details,
     ip: securityEvent.ip,
@@ -294,7 +295,7 @@ const sanitizeInput = (input, context = {}) => {
   }
 
   const originalInput = input;
-  
+
   // Remove potential NoSQL injection attempts
   const sanitized = input
     .replace(/\$where/gi, '')

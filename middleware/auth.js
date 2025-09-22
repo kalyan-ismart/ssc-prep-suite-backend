@@ -1,69 +1,125 @@
-// middleware/auth.js
+// middleware/auth.js - Authentication Middleware
 
 const jwt = require('jsonwebtoken');
-const { errorResponse } = require('../utils/errors');
 
 /**
- * Authentication middleware to verify JWT tokens
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
+ * Middleware to verify JWT token and authenticate user
  */
 const auth = (req, res, next) => {
   try {
     // Get token from header
-    const token = req.header('Authorization')?.replace('Bearer ', '') || 
-                  req.header('x-auth-token');
-
-    // Check if no token
-    if (!token) {
-      return errorResponse(res, 401, 'No token provided. Access denied.');
+    const authHeader = req.header('Authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided. Access denied.',
+        code: 'NO_TOKEN'
+      });
     }
+
+    // Extract token
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Check token type
+    if (decoded.type !== 'access') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token type.',
+        code: 'INVALID_TOKEN_TYPE'
+      });
+    }
+
+    // Add user info to request
     req.user = decoded.user;
     next();
+
   } catch (error) {
+    console.error('Authentication error:', error.message);
+    
     if (error.name === 'TokenExpiredError') {
-      return errorResponse(res, 401, 'Token has expired. Please login again.');
-    } else if (error.name === 'JsonWebTokenError') {
-      return errorResponse(res, 401, 'Invalid token. Access denied.');
-    } else {
-      return errorResponse(res, 500, 'Token verification failed.');
+      return res.status(401).json({
+        success: false,
+        message: 'Token expired. Please login again.',
+        code: 'TOKEN_EXPIRED'
+      });
     }
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token. Access denied.',
+        code: 'INVALID_TOKEN'
+      });
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: 'Token verification failed. Access denied.',
+      code: 'AUTH_FAILED'
+    });
   }
 };
 
 /**
- * Admin authorization middleware
- * Must be used after auth middleware
+ * Middleware to verify admin role
  */
 const adminAuth = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return errorResponse(res, 403, 'Access denied. Admin privileges required.');
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required.',
+      code: 'AUTH_REQUIRED'
+    });
   }
+
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Admin access required. Access denied.',
+      code: 'ADMIN_REQUIRED'
+    });
+  }
+
   next();
 };
 
 /**
- * Optional authentication middleware
- * Adds user info if token is present but doesn't require it
+ * Optional authentication middleware - doesn't fail if no token
  */
 const optionalAuth = (req, res, next) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '') || 
-                  req.header('x-auth-token');
-
-    if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded.user;
+    const authHeader = req.header('Authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No token provided, continue without authentication
+      req.user = null;
+      return next();
     }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    if (decoded.type === 'access') {
+      req.user = decoded.user;
+    } else {
+      req.user = null;
+    }
+    
     next();
+
   } catch (error) {
-    // Continue without authentication if token is invalid
+    // Token exists but is invalid, continue without authentication
+    req.user = null;
     next();
   }
 };
 
-module.exports = { auth, adminAuth, optionalAuth };
+module.exports = {
+  auth,
+  adminAuth,
+  optionalAuth
+};
