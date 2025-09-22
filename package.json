@@ -3,8 +3,6 @@
   "version": "1.0.0",
   "description": "Backend API for SarkariSuccess Hub - SSC and Banking Exam Preparation Platform",
   "main": "server.js",
-  "author": "SarkariSuccess Team",
-  "license": "MIT",
   "private": true,
   "homepage": "https://testtitans.netlify.app",
   "repository": {
@@ -37,112 +35,53 @@
     "dev": "cross-env NODE_ENV=development nodemon server.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
-    "test:integration": "jest --testPathPattern=tests/integration",
-    "test:unit": "jest --testPathPattern=tests/unit",
-    "lint": "eslint . --ext .js --ignore-path .gitignore",
-    "lint:fix": "eslint . --ext .js --fix --ignore-path .gitignore",
-    "format": "prettier --write \"**/*.{js,json,md}\"",
-    "format:check": "prettier --check \"**/*.{js,json,md}\"",
-    "security": "npm audit && npm audit fix",
-    "validate": "npm-run-all lint test:unit security",
-    "precommit": "lint-staged",
-    "prepare": "husky install",
-    "build": "echo 'No build step required'",
-    "docker:build": "docker build -t ssc-prep-suite-backend .",
-    "docker:run": "docker run -p 5000:5000 --env-file .env ssc-prep-suite-backend",
-    "deploy:staging": "echo 'Staging deployment script'",
-    "deploy:prod": "echo 'Production deployment script'",
-    "logs": "tail -f logs/combined.log",
-    "clean": "rm -rf node_modules package-lock.json && npm install"
+    "test:integration": "jest --config jest.integration.config.js",
+    "prepare": "husky install"
   },
   "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "mongodb": "^5.7.0",
     "bcryptjs": "^2.4.3",
-    "compression": "^1.8.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^4.21.2",
-    "express-mongo-sanitize": "^2.2.0",
-    "express-rate-limit": "^7.5.1",
-    "express-validator": "^7.2.1",
-    "express-winston": "^4.2.0",
-    "helmet": "^7.2.0",
-    "husky": "^9.1.7",
     "jsonwebtoken": "^9.0.2",
-    "mime": "^4.0.4",
-    "mongodb": "5.7.0",
-    "mongoose": "^7.3.0",
-    "morgan": "^1.10.1",
-    "openai": "^4.67.3",
-    "validator": "^13.15.15",
-    "winston": "^3.17.0",
-    "xss-clean": "^0.1.4"
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "compression": "^1.7.4",
+    "morgan": "^1.10.0",
+    "express-rate-limit": "^6.10.0",
+    "winston": "^3.10.0",
+    "express-winston": "^4.2.0",
+    "express-mongo-sanitize": "^2.2.0",
+    "xss-clean": "^0.1.4",
+    "express-validator": "^7.0.1",
+    "validator": "^13.11.0"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.13",
+    "nodemon": "^3.0.1",
     "cross-env": "^7.0.3",
-    "eslint": "^8.57.1",
-    "eslint-config-node": "^4.0.0",
-    "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-jest": "^28.8.3",
-    "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-prettier": "^5.2.1",
-    "eslint-plugin-security": "^3.0.1",
-    "jest": "^29.7.0",
-    "lint-staged": "^15.2.10",
-    "nodemon": "^3.1.7",
-    "npm-run-all": "^4.1.5",
-    "prettier": "^3.3.3",
-    "supertest": "^7.0.0"
+    "jest": "^29.6.2",
+    "supertest": "^6.3.3",
+    "husky": "^8.0.3"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0"
-  },
-  "nodemonConfig": {
-    "ignore": [
-      "tests/",
-      "logs/",
-      "*.test.js"
-    ],
-    "delay": "1000"
+    "node": ">=16.0.0"
   },
   "jest": {
     "testEnvironment": "node",
-    "coverageDirectory": "coverage",
     "collectCoverageFrom": [
-      "**/*.js",
-      "!**/node_modules/**",
-      "!**/coverage/**",
-      "!**/logs/**",
-      "!server.js"
+      "routes/**/*.js",
+      "models/**/*.js",
+      "utils/**/*.js",
+      "validators/**/*.js",
+      "middleware/**/*.js",
+      "!**/*.test.js"
     ],
-    "testMatch": [
-      "**/__tests__/**/*.js",
-      "**/?(*.)+(spec|test).js"
-    ],
-    "setupFilesAfterEnv": [
-      "<rootDir>/tests/setup.js"
+    "coverageDirectory": "coverage",
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "html"
     ]
-  },
-  "lint-staged": {
-    "*.js": [
-      "eslint --fix",
-      "prettier --write",
-      "git add"
-    ],
-    "*.{json,md}": [
-      "prettier --write",
-      "git add"
-    ]
-  },
-  "husky": {
-    "hooks": {
-      "pre-commit": "lint-staged",
-      "pre-push": "npm run validate"
-    }
-  },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.8",
-    "utf-8-validate": "^6.0.4"
   }
 }
