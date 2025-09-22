@@ -1,7 +1,6 @@
 // utils/errors.js
 const winston = require('winston');
 const { validationResult } = require('express-validator');
-const nodemailer = require('nodemailer'); // Added for email alerts
 
 // ENHANCED: Create comprehensive security logger with better configuration
 const securityLogger = winston.createLogger({
@@ -44,17 +43,6 @@ const securityLogger = winston.createLogger({
     ]
 });
 
-// ENHANCED: Email transporter for security alerts
-const emailTransporter = nodemailer.createTransporter({
-    host: process.env.SMTP_HOST || 'localhost',
-    port: process.env.SMTP_PORT || 587,
-    secure: false, // true for 465, false for other ports
-    auth: process.env.SMTP_USER ? {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-    } : undefined
-});
-
 // ENHANCED: Security event logging with severity levels
 const logSecurityEvent = async (req, eventType, severity = 'info', additionalData = {}) => {
     const logData = {
@@ -73,7 +61,7 @@ const logSecurityEvent = async (req, eventType, severity = 'info', additionalDat
     try {
         securityLogger.log(severity, `Security Event: ${eventType}`, logData);
         
-        // Send alerts for critical security events
+        // Send alerts for critical security events (placeholder for now)
         if (severity === 'error' || (severity === 'warning' && isCriticalEvent(eventType))) {
             await sendSecurityAlert(eventType, logData);
         }
@@ -96,51 +84,21 @@ const isCriticalEvent = (eventType) => {
     return criticalEvents.includes(eventType);
 };
 
-// ENHANCED: Send security alerts via email/webhook
+// ENHANCED: Send security alerts (simplified version)
 const sendSecurityAlert = async (eventType, logData) => {
     try {
-        // Email alert (if configured)
-        if (process.env.SECURITY_ALERT_EMAIL && process.env.SMTP_HOST) {
-            const mailOptions = {
-                from: process.env.SMTP_FROM || 'security@yourdomain.com',
-                to: process.env.SECURITY_ALERT_EMAIL,
-                subject: `🚨 Security Alert: ${eventType}`,
-                html: `
-                    <h2>Security Alert</h2>
-                    <p><strong>Event Type:</strong> ${eventType}</p>
-                    <p><strong>Severity:</strong> ${logData.severity}</p>
-                    <p><strong>Time:</strong> ${logData.timestamp}</p>
-                    <p><strong>IP Address:</strong> ${logData.ip}</p>
-                    <p><strong>User Agent:</strong> ${logData.userAgent}</p>
-                    <p><strong>URL:</strong> ${logData.url}</p>
-                    <p><strong>User ID:</strong> ${logData.userId}</p>
-                    <p><strong>Request ID:</strong> ${logData.requestId}</p>
-                    <h3>Additional Data:</h3>
-                    <pre>${JSON.stringify(logData, null, 2)}</pre>
-                `
-            };
+        // Log critical security events to console for now
+        console.error(`🚨 SECURITY ALERT: ${eventType}`, {
+            severity: logData.severity,
+            time: logData.timestamp,
+            ip: logData.ip,
+            userId: logData.userId,
+            url: logData.url
+        });
 
-            await emailTransporter.sendMail(mailOptions);
-        }
-
-        // Webhook alert (if configured)
-        if (process.env.SECURITY_WEBHOOK_URL) {
-            const fetch = require('node-fetch');
-            await fetch(process.env.SECURITY_WEBHOOK_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': process.env.SECURITY_WEBHOOK_TOKEN ? `Bearer ${process.env.SECURITY_WEBHOOK_TOKEN}` : undefined
-                },
-                body: JSON.stringify({
-                    eventType,
-                    severity: logData.severity,
-                    timestamp: logData.timestamp,
-                    data: logData
-                })
-            });
-        }
-
+        // TODO: Implement email/webhook alerts when needed
+        // For now, we'll just log to console and security log file
+        
     } catch (error) {
         console.error('Failed to send security alert:', error);
         securityLogger.error('Failed to send security alert', { error: error.message, eventType });
@@ -349,5 +307,5 @@ module.exports = {
     validateRequest,
     rateLimitHandler,
     detectSecurityThreats,
-    sendSecurityAlert // Now implemented
+    sendSecurityAlert
 };
