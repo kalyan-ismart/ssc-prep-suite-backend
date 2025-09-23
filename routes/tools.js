@@ -6,7 +6,7 @@ const validator = require('validator');
 const Tool = require('../models/tool.model');
 const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
-const nullUndefinedCheck = require('../utils/nullUndefinedCheck');
+const nullUndefinedCheck = require('./utils/nullUndefinedCheck');
 
 const router = express.Router();
 

@@ -9,7 +9,7 @@ const Quiz = require('../models/quiz.model');
 const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { validateUserId, validateProgressUpdate, validateAnalyticsQuery } = require('../validators/progressValidators');
 const { auth, adminAuth } = require('../middleware/auth');
-const nullUndefinedCheck = require('../utils/nullUndefinedCheck');
+const nullUndefinedCheck = require('./utils/nullUndefinedCheck');
 
 const router = express.Router();
 
