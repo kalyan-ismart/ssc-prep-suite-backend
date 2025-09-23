@@ -14,7 +14,6 @@ const {
   logSecurityEvent,
 } = require('../utils/errors');
 const { auth, adminAuth } = require('../middleware/auth');
-
 const isNullOrUndefined = require('../utils/nullUndefinedCheck');
 
 const router = express.Router();
@@ -132,7 +131,6 @@ router.get('/', [auth, adminAuth, ...validateUserQuery], asyncHandler(async (req
     const skip = (page - 1) * limit;
 
     const filter = {};
-    
     if (role) filter.role = role;
     if (isActive !== undefined) filter.isActive = isActive === 'true';
 
@@ -221,6 +219,7 @@ router.post('/register', validateUser, asyncHandler(async (req, res) => {
       quizzesTaken: 0,
       streak: { currentStreak: 0, longestStreak: 0 }
     });
+
     await progress.save();
 
     logSecurityEvent('USER_REGISTERED', {
@@ -272,9 +271,9 @@ router.post('/login', validateLogin, asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
     // Find user
-    const user = await User.findOne({ 
+    const user = await User.findOne({
       email: email.toLowerCase(),
-      isActive: true 
+      isActive: true
     }).select('+password');
 
     if (!user) {
@@ -291,12 +290,12 @@ router.post('/login', validateLogin, asyncHandler(async (req, res) => {
       // Increment failed login attempts
       user.loginAttempts = (user.loginAttempts || 0) + 1;
       user.lastFailedLogin = new Date();
-      
+
       // Lock account after 5 failed attempts
       if (user.loginAttempts >= 5) {
         user.accountLockedUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
       }
-      
+
       await user.save();
 
       logSecurityEvent('LOGIN_FAILED', {
@@ -382,7 +381,7 @@ router.post('/refresh', [
 
     // Verify refresh token
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    
+
     // Find user with this refresh token
     const user = await User.findOne({
       _id: decoded.id,

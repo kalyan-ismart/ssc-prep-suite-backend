@@ -269,7 +269,7 @@ function calculateStudyPatternsReal(recentQuizzes, studyHistory) {
         const date = new Date(submission.submittedAt);
         const hour = date.getHours();
         const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-        
+
         hourCounts[hour]++;
         dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
         totalSessions++;
@@ -445,6 +445,7 @@ router.post('/update/:userId', [auth, ...validateProgressUpdate], asyncHandler(a
 
   try {
     const updateData = { ...req.body, lastActivity: new Date() };
+
     const progress = await Progress.findOneAndUpdate(
       { user: req.params.userId },
       { $set: updateData },

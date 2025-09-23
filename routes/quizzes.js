@@ -56,7 +56,7 @@ const validateQuiz = [
   body('timeLimit')
     .optional()
     .isInt({ min: 1, max: 300 })
-    .withMessage('Time limit must be between 1 and 300 minutes'),
+    .withMessage('Time limit must be between 1 and 300 minutes')
 ];
 
 const validateQuizQuery = [
@@ -112,7 +112,7 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
       const sanitizedSearch = validator.escape(search);
       filter.$or = [
         { title: { $regex: sanitizedSearch, $options: 'i' } },
-        { 'questions.questionText': { $regex: sanitizedSearch, $options: 'i' } },
+        { 'questions.questionText': { $regex: sanitizedSearch, $options: 'i' } }
       ];
     }
 
@@ -155,7 +155,7 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
 // GET quiz by ID
 router.get('/:id', [
   optionalAuth,
-  param('id').isMongoId().withMessage('Valid quiz ID is required'),
+  param('id').isMongoId().withMessage('Valid quiz ID is required')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -239,7 +239,7 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
 router.post('/update/:id', [
   auth,
   param('id').isMongoId().withMessage('Valid quiz ID is required'),
-  ...validateQuiz.map(v => v.optional({ nullable: true })),
+  ...validateQuiz.map(v => v.optional({ nullable: true }))
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -310,7 +310,7 @@ router.post('/update/:id', [
 router.delete('/:id', [
   auth,
   adminAuth,
-  param('id').isMongoId().withMessage('Valid quiz ID is required'),
+  param('id').isMongoId().withMessage('Valid quiz ID is required')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -430,7 +430,7 @@ router.post('/:id/submit', [
 router.post('/:id/toggle', [
   auth,
   adminAuth,
-  param('id').isMongoId().withMessage('Valid quiz ID is required'),
+  param('id').isMongoId().withMessage('Valid quiz ID is required')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
