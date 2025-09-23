@@ -15,6 +15,8 @@ const {
 } = require('../utils/errors');
 const { auth, adminAuth } = require('../middleware/auth');
 
+const isNullOrUndefined = require('../utils/nullUndefinedCheck');
+
 const router = express.Router();
 
 // Enhanced password validation with common passwords list
