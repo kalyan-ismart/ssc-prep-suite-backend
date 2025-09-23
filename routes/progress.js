@@ -1,23 +1,23 @@
-// routes/progress.js 
+// routes/progress.js
 
 const express = require('express');
 const { validationResult } = require('express-validator');
-const validator = require('validator'); // FIXED: Added missing import
+const validator = require('validator');
 const Progress = require('../models/progress.model');
 const User = require('../models/user.model');
-const Quiz = require('../models/quiz.model'); // Assuming quiz model exists
+const Quiz = require('../models/quiz.model');
 const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { validateUserId, validateProgressUpdate, validateAnalyticsQuery } = require('../validators/progressValidators');
 const { auth, adminAuth } = require('../middleware/auth');
+const nullUndefinedCheck = require('../util/nullUndefinedCheck');
 
 const router = express.Router();
 
-// ENHANCED: Helper function to securely find progress by user ID
+// Helper function to securely find progress by user ID
 const findProgressSecurely = async (userId, populateFields = '') => {
   if (!validator.isMongoId(userId)) {
     throw new Error('Invalid user ID format');
   }
-
   return Progress.findOne({ user: userId }).populate(populateFields).lean();
 };
 
@@ -27,7 +27,7 @@ const findProgressSecurely = async (userId, populateFields = '') => {
 router.get('/', [auth, adminAuth], asyncHandler(async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = Math.min(parseInt(req.query.limit) || 10, 50); // Cap at 50
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
     const skip = (page - 1) * limit;
 
     const [allProgress, total] = await Promise.all([
@@ -55,7 +55,6 @@ router.get('/', [auth, adminAuth], asyncHandler(async (req, res) => {
       },
       timestamp: new Date().toISOString()
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -65,7 +64,7 @@ router.get('/', [auth, adminAuth], asyncHandler(async (req, res) => {
 // @desc Get progress of a specific user
 // @access Private
 router.get('/user/:userId', [auth, ...validateUserId], asyncHandler(async (req, res) => {
-  // ENHANCED: Authorization check
+  // Authorization check
   if (req.user.id !== req.params.userId && req.user.role !== 'admin') {
     logSecurityEvent('UNAUTHORIZED_PROGRESS_ACCESS', {
       requesterId: req.user.id,
@@ -76,7 +75,6 @@ router.get('/user/:userId', [auth, ...validateUserId], asyncHandler(async (req, 
 
   try {
     const progress = await findProgressSecurely(req.params.userId, 'user');
-
     if (!progress) {
       return errorResponse(res, 404, 'Progress not found.');
     }
@@ -86,13 +84,12 @@ router.get('/user/:userId', [auth, ...validateUserId], asyncHandler(async (req, 
       data: progress,
       timestamp: new Date().toISOString()
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
 }));
 
-// ENHANCED: Real analytics implementation instead of mock functions
+// Real analytics implementation
 const calculateRealAnalytics = async (progress, userId) => {
   try {
     // Get real data from database
@@ -103,24 +100,14 @@ const calculateRealAnalytics = async (progress, userId) => {
         .sort({ 'submissions.submittedAt': -1 })
         .limit(50)
         .lean(),
-      // If you have a study sessions collection, query it here
-      // StudySession.find({ userId }).sort({ date: -1 }).limit(30).lean()
       Promise.resolve([]) // Placeholder for study history
     ]);
 
-    // Calculate weekly progress from real data
+    // Calculate analytics from real data
     const weeklyProgress = calculateWeeklyProgressReal(recentQuizzes, studyHistory);
-
-    // Calculate subject performance from quiz data
     const subjectPerformance = calculateSubjectPerformanceReal(recentQuizzes);
-
-    // Calculate streak from real activity data
     const streakAnalysis = calculateStreakAnalysisReal(progress, recentQuizzes);
-
-    // Calculate study patterns from real data
     const studyPatterns = calculateStudyPatternsReal(recentQuizzes, studyHistory);
-
-    // Generate improvement suggestions based on real performance
     const improvements = generateImprovementSuggestionsReal(progress, subjectPerformance);
 
     return {
@@ -140,14 +127,13 @@ const calculateRealAnalytics = async (progress, userId) => {
       studyPatterns,
       improvements
     };
-
   } catch (error) {
     console.error('Analytics calculation error:', error);
     throw error;
   }
 };
 
-// ENHANCED: Real weekly progress calculation
+// Real weekly progress calculation
 function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
   const weekData = {};
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -163,7 +149,6 @@ function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
       quiz.submissions.forEach(submission => {
         const submissionDate = new Date(submission.submittedAt);
         const dayName = submissionDate.toLocaleDateString('en-US', { weekday: 'long' });
-
         if (weekData[dayName]) {
           weekData[dayName].quizzes++;
           weekData[dayName].scores.push(submission.score || 0);
@@ -175,8 +160,8 @@ function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
 
   // Convert to array format
   return daysOfWeek.map(day => ({
-    day: day.substring(0, 3), // Mon, Tue, etc.
-    studyTime: Math.round(weekData[day].studyTime / 60), // Convert to minutes
+    day: day.substring(0, 3),
+    studyTime: Math.round(weekData[day].studyTime / 60),
     quizzes: weekData[day].quizzes,
     averageScore: weekData[day].scores.length > 0
       ? Math.round(weekData[day].scores.reduce((a, b) => a + b, 0) / weekData[day].scores.length)
@@ -184,13 +169,12 @@ function calculateWeeklyProgressReal(recentQuizzes, studyHistory) {
   }));
 }
 
-// ENHANCED: Real subject performance calculation
+// Real subject performance calculation
 function calculateSubjectPerformanceReal(recentQuizzes) {
   const subjectData = {};
 
   recentQuizzes.forEach(quiz => {
     const subject = quiz.category?.name || 'General';
-    
     if (!subjectData[subject]) {
       subjectData[subject] = {
         scores: [],
@@ -219,12 +203,12 @@ function calculateSubjectPerformanceReal(recentQuizzes) {
     accuracy: subjectData[subject].scores.length > 0
       ? Math.round((subjectData[subject].scores.filter(score => score >= 60).length / subjectData[subject].scores.length) * 100)
       : 0,
-    timeSpent: Math.round(subjectData[subject].timeSpent / 60), // Convert to minutes
+    timeSpent: Math.round(subjectData[subject].timeSpent / 60),
     quizCount: subjectData[subject].quizCount
   }));
 }
 
-// ENHANCED: Real streak analysis
+// Real streak analysis
 function calculateStreakAnalysisReal(progress, recentQuizzes) {
   const streakData = progress.streak || {};
   const recentActivity = recentQuizzes.map(quiz =>
@@ -251,7 +235,6 @@ function calculateStreakHistory(activityDates) {
   ))].sort();
 
   let currentStreak = 0;
-
   for (let i = 0; i < uniqueDays.length; i++) {
     const currentDate = new Date(uniqueDays[i]);
     const prevDate = i > 0 ? new Date(uniqueDays[i - 1]) : null;
@@ -270,10 +253,10 @@ function calculateStreakHistory(activityDates) {
     history.push({ streak: currentStreak, endDate: new Date(uniqueDays[uniqueDays.length - 1]) });
   }
 
-  return history.slice(-10); // Return last 10 streaks
+  return history.slice(-10);
 }
 
-// ENHANCED: Real study patterns calculation
+// Real study patterns calculation
 function calculateStudyPatternsReal(recentQuizzes, studyHistory) {
   const hourCounts = new Array(24).fill(0);
   const dayCounts = {};
@@ -286,7 +269,7 @@ function calculateStudyPatternsReal(recentQuizzes, studyHistory) {
         const date = new Date(submission.submittedAt);
         const hour = date.getHours();
         const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-
+        
         hourCounts[hour]++;
         dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
         totalSessions++;
@@ -302,7 +285,7 @@ function calculateStudyPatternsReal(recentQuizzes, studyHistory) {
 
   return {
     preferredStudyTime: getTimeOfDay(preferredHour),
-    averageSessionLength: totalSessions > 0 ? Math.round((totalTime / totalSessions) / 60) : 0, // minutes
+    averageSessionLength: totalSessions > 0 ? Math.round((totalTime / totalSessions) / 60) : 0,
     mostActiveDay,
     consistency: calculateConsistency(recentQuizzes),
     hourlyDistribution: hourCounts,
@@ -320,7 +303,6 @@ function getTimeOfDay(hour) {
 
 function calculateConsistency(recentQuizzes) {
   const uniqueDays = new Set();
-
   recentQuizzes.forEach(quiz => {
     if (quiz.submissions) {
       quiz.submissions.forEach(submission => {
@@ -331,7 +313,7 @@ function calculateConsistency(recentQuizzes) {
   });
 
   const daysActive = uniqueDays.size;
-  const totalDays = 30; // Consider last 30 days
+  const totalDays = 30;
   return Math.round((daysActive / totalDays) * 100);
 }
 
@@ -352,7 +334,7 @@ function calculateOverallAccuracy(recentQuizzes, userId) {
   return totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
 }
 
-// ENHANCED: Real improvement suggestions
+// Real improvement suggestions
 function generateImprovementSuggestionsReal(progress, subjectPerformance) {
   const suggestions = [];
 
@@ -380,7 +362,7 @@ function generateImprovementSuggestionsReal(progress, subjectPerformance) {
 
   // Analyze study time
   const totalStudyTime = progress.totalStudyTime || 0;
-  if (totalStudyTime < 600) { // Less than 10 hours
+  if (totalStudyTime < 600) {
     suggestions.push({
       type: 'time',
       message: 'Increase your study time to improve your preparation.',
@@ -415,7 +397,7 @@ function generateImprovementSuggestionsReal(progress, subjectPerformance) {
 // @desc Get analytics for a user
 // @access Private
 router.get('/analytics/:userId', [auth, ...validateUserId], asyncHandler(async (req, res) => {
-  // Authorization: User can get their own analytics, or an admin can get any
+  // Authorization check
   if (req.user.id !== req.params.userId && req.user.role !== 'admin') {
     logSecurityEvent('UNAUTHORIZED_ANALYTICS_ACCESS', {
       requesterId: req.user.id,
@@ -426,12 +408,11 @@ router.get('/analytics/:userId', [auth, ...validateUserId], asyncHandler(async (
 
   try {
     const progress = await findProgressSecurely(req.params.userId, 'user');
-
     if (!progress) {
       return errorResponse(res, 404, 'Progress not found.');
     }
 
-    // FIXED: Use real analytics instead of mock data
+    // Use real analytics instead of mock data
     const analytics = await calculateRealAnalytics(progress, req.params.userId);
 
     logSecurityEvent('ANALYTICS_ACCESSED', {
@@ -444,7 +425,6 @@ router.get('/analytics/:userId', [auth, ...validateUserId], asyncHandler(async (
       data: analytics,
       generatedAt: new Date().toISOString()
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -454,7 +434,7 @@ router.get('/analytics/:userId', [auth, ...validateUserId], asyncHandler(async (
 // @desc Update progress for a user
 // @access Private
 router.post('/update/:userId', [auth, ...validateProgressUpdate], asyncHandler(async (req, res) => {
-  // Authorization: User can update their own progress, or an admin can update any
+  // Authorization check
   if (req.user.id !== req.params.userId && req.user.role !== 'admin') {
     logSecurityEvent('UNAUTHORIZED_PROGRESS_UPDATE', {
       requesterId: req.user.id,
@@ -465,7 +445,6 @@ router.post('/update/:userId', [auth, ...validateProgressUpdate], asyncHandler(a
 
   try {
     const updateData = { ...req.body, lastActivity: new Date() };
-    
     const progress = await Progress.findOneAndUpdate(
       { user: req.params.userId },
       { $set: updateData },
@@ -484,7 +463,6 @@ router.post('/update/:userId', [auth, ...validateProgressUpdate], asyncHandler(a
       message: 'Progress updated successfully.',
       timestamp: new Date().toISOString()
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }

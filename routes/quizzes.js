@@ -1,11 +1,12 @@
-// routes/quizzes.js 
+// routes/quizzes.js
 
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
-const validator = require('validator'); // FIXED: Added missing import
+const validator = require('validator');
 const Quiz = require('../models/quiz.model');
 const { errorResponse, handleDatabaseError, asyncHandler, logSecurityEvent } = require('../utils/errors');
 const { auth, adminAuth, optionalAuth } = require('../middleware/auth');
+const nullUndefinedCheck = require('../util/nullUndefinedCheck');
 
 const router = express.Router();
 
@@ -17,50 +18,41 @@ const validateQuiz = [
     .isLength({ min: 1, max: 100 })
     .withMessage('Title must be 1-100 characters')
     .customSanitizer((value) => validator.escape(value)),
-
   body('questions')
     .optional()
     .isArray()
     .withMessage('Questions must be an array'),
-
   body('questions.*.questionText')
     .optional()
     .isString()
     .trim()
     .withMessage('Question text must be a string')
     .customSanitizer((value) => validator.escape(value)),
-
   body('questions.*.options')
     .optional()
     .isArray()
     .withMessage('Options must be an array'),
-
   body('questions.*.options.*.text')
     .optional()
     .isString()
     .trim()
     .withMessage('Option text must be a string')
     .customSanitizer((value) => validator.escape(value)),
-
   body('questions.*.options.*.isCorrect')
     .optional()
     .isBoolean()
     .withMessage('isCorrect must be a boolean'),
-
   body('category')
     .isMongoId()
     .withMessage('Valid category ID is required'),
-
   body('difficulty')
     .optional()
     .isIn(['easy', 'medium', 'hard'])
     .withMessage('Invalid difficulty level'),
-
   body('isActive')
     .optional()
     .isBoolean()
     .withMessage('isActive must be a boolean'),
-
   body('timeLimit')
     .optional()
     .isInt({ min: 1, max: 300 })
@@ -72,29 +64,24 @@ const validateQuizQuery = [
     .optional()
     .isMongoId()
     .withMessage('Valid category ID is required'),
-
   query('difficulty')
     .optional()
     .isIn(['easy', 'medium', 'hard'])
     .withMessage('Invalid difficulty level'),
-
   query('search')
     .optional()
     .isString()
     .isLength({ max: 100 })
     .withMessage('Search query too long')
     .customSanitizer((value) => validator.escape(value)),
-
   query('page')
     .optional()
     .isInt({ min: 1, max: 1000 })
     .withMessage('Page must be between 1 and 1000'),
-
   query('limit')
     .optional()
     .isInt({ min: 1, max: 50 })
     .withMessage('Limit must be between 1 and 50'),
-
   query('active')
     .optional()
     .isBoolean()
@@ -160,7 +147,6 @@ router.get('/', [optionalAuth, ...validateQuizQuery], asyncHandler(async (req, r
         hasPrev: page > 1
       }
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -195,7 +181,6 @@ router.get('/:id', [
     }
 
     res.json({ success: true, data: quiz });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -245,7 +230,6 @@ router.post('/add', [auth, ...validateQuiz], asyncHandler(async (req, res) => {
       message: 'Quiz added successfully.',
       data: populatedQuiz
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -317,7 +301,6 @@ router.post('/update/:id', [
       message: 'Quiz updated successfully.',
       data: updatedQuiz
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -357,7 +340,6 @@ router.delete('/:id', [
         deletedAt: new Date().toISOString()
       }
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -439,7 +421,6 @@ router.post('/:id/submit', [
         passed: score >= 60 // Assuming 60% is passing
       }
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
@@ -482,7 +463,6 @@ router.post('/:id/toggle', [
       message: `Quiz ${quiz.isActive ? 'activated' : 'deactivated'} successfully.`,
       data: populatedQuiz
     });
-
   } catch (error) {
     return handleDatabaseError(res, error);
   }
