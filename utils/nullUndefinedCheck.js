@@ -1,4 +1,4 @@
-// util/nullUndefinedCheck.js
+// utils/nullUndefinedCheck.js
 
 /**
  * Checks whether a given value is null or undefined.
