@@ -72,6 +72,12 @@ function setCachedResponse(key, data) {
   apiCache.set(key, { data, timestamp: Date.now() });
 }
 
+// ==================== ADD THIS HEALTH ENDPOINT HERE ====================
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'UP', message: 'Server is healthy' });
+});
+// =======================================================================
+
 // GET /api/today — Returns live IST date
 app.get('/api/today', (req, res) => {
   const now = new Date();
@@ -395,17 +401,18 @@ app.post('/api/tts', (req, res) => {
   res.json({ useBrowserTTS: true });
 });
 
-// Wildcard route to serve index.html for SPA
+// Wildcard route to serve index.html for Single Page Application routing history fallbacks
 app.get('*', (req, res) => {
   const buildIndex = path.join(frontendBuildPath, 'index.html');
   const publicIndex = path.join(frontendPublicPath, 'index.html');
 
   if (fs.existsSync(buildIndex)) {
     return res.sendFile(buildIndex);
-  } else if (fs.existsSync(publicIndex)) {
+  }
+  if (fs.existsSync(publicIndex)) {
     return res.sendFile(publicIndex);
   }
-  res.status(404).send('index.html not found');
+  res.status(404).send('Not Found');
 });
 
 // Global Process Error Handlers to log crashes to terminal
