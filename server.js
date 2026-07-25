@@ -3,21 +3,139 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
+const dns = require('dns');
+
+// Use Google Public DNS to resolve MongoDB Atlas SRV records
+// (fixes ECONNREFUSED on systems where the default DNS resolver blocks SRV queries)
+dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+
+// Auto-load environment variables from backend/.env or root .env file
+function loadEnvFile() {
+  const envPaths = [
+    path.join(__dirname, '.env'),
+    path.join(__dirname, '../.env')
+  ];
+
+  for (const envPath of envPaths) {
+    if (fs.existsSync(envPath)) {
+      try {
+        const content = fs.readFileSync(envPath, 'utf8');
+        content.split('\n').forEach(line => {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) {
+            const eqIndex = trimmed.indexOf('=');
+            if (eqIndex !== -1) {
+              const key = trimmed.substring(0, eqIndex).trim();
+              let val = trimmed.substring(eqIndex + 1).trim();
+              if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                val = val.slice(1, -1);
+              }
+              if (val) {
+                process.env[key] = val;
+              }
+            }
+          }
+        });
+        console.log(`📄 Environment configuration loaded from: ${envPath}`);
+      } catch (e) {
+        console.warn(`⚠️ Warning reading env file at ${envPath}:`, e.message);
+      }
+    }
+  }
+}
+loadEnvFile();
+
+function getApiKey(req) {
+  let key = (req && (req.headers['x-api-key'] || req.body?._apiKey)) || '';
+  if (key && key.trim()) return key.trim();
+
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+    return process.env.GEMINI_API_KEY.trim();
+  }
+  if (process.env.API_KEY && process.env.API_KEY.trim()) {
+    return process.env.API_KEY.trim();
+  }
+  return '';
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// MongoDB Connection
+// MongoDB Connection with Auto-Retry
 const mongoURI = process.env.ATLAS_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/ssc-prep-suite';
-mongoose.connect(mongoURI)
-  .then(() => console.log('🍃 MongoDB connection established successfully'))
-  .catch(err => {
-    console.warn('⚠️ MongoDB connection warning:', err.message);
-    console.warn('💡 Tip: Ensure local MongoDB service is running (e.g. net start MongoDB) or set ATLAS_URI in env.');
-  });
+const MONGO_MAX_RETRIES = 5;
+const MONGO_RETRY_BASE_MS = 3000;
 
-app.use(cors());
+async function connectWithRetry(attempt = 1) {
+  try {
+    await mongoose.connect(mongoURI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      heartbeatFrequencyMS: 10000,
+    });
+    console.log('🍃 MongoDB connection established successfully');
+  } catch (err) {
+    if (attempt < MONGO_MAX_RETRIES) {
+      const delay = MONGO_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+      console.warn(`⚠️ MongoDB connection attempt ${attempt}/${MONGO_MAX_RETRIES} failed: ${err.message}`);
+      console.warn(`🔄 Retrying in ${delay / 1000}s...`);
+      await new Promise(r => setTimeout(r, delay));
+      return connectWithRetry(attempt + 1);
+    }
+    console.error(`❌ MongoDB connection failed after ${MONGO_MAX_RETRIES} attempts: ${err.message}`);
+    console.warn('💡 Tip: Ensure MongoDB service is running or set ATLAS_URI in .env');
+    console.warn('⚡ Server will continue without database — DB routes will return 503');
+  }
+}
+
+// Listen for connection events to auto-reconnect on disconnect
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected. Attempting to reconnect...');
+  setTimeout(() => connectWithRetry(1), 5000);
+});
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB connection error:', err.message);
+});
+
+connectWithRetry();
+
+// CORS — allow known frontend origins and localhost for development
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  process.env.FRONTEND_URL,         // e.g. https://your-app.netlify.app
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      return callback(null, true);
+    }
+    // In production, also allow any .netlify.app or .onrender.com origin
+    if (/\.(netlify\.app|onrender\.com)$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Fallback: allow all (safe for public APIs)
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
+
+// Request timeout middleware — prevent hanging requests (30 seconds)
+app.use((req, res, next) => {
+  // Longer timeout for AI generation endpoints
+  const timeout = req.path.startsWith('/api/flow') || req.path.startsWith('/api/chat') ? 120000 : 30000;
+  req.setTimeout(timeout);
+  res.setTimeout(timeout, () => {
+    if (!res.headersSent) {
+      console.error(`⏱️ Request timeout: ${req.method} ${req.originalUrl}`);
+      res.status(408).json({ error: 'Request timed out. Please try again.' });
+    }
+  });
+  next();
+});
 
 // Request logger middleware — prints every incoming request and response status to terminal
 app.use((req, res, next) => {
@@ -41,18 +159,27 @@ app.use('/modules', modulesRouter);
 app.use('/users', usersRouter);
 app.use('/progress', progressRouter);
 
-// Serve static frontend assets (prefer build folder if present, fallback to public)
+// Serve static frontend assets (prefer public folder for live asset serving)
 const frontendBuildPath = path.join(__dirname, '../frontend/build');
 const frontendPublicPath = path.join(__dirname, '../frontend/public');
 
+// Force browsers to disable stale caching of static assets
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
+app.use(express.static(frontendPublicPath, { etag: false, maxAge: 0 }));
 if (fs.existsSync(frontendBuildPath)) {
-  app.use(express.static(frontendBuildPath));
+  app.use(express.static(frontendBuildPath, { etag: false, maxAge: 0 }));
 }
-app.use(express.static(frontendPublicPath));
 
 // In-Memory API Cache to prevent repeated rate-limit hits (TTL: 30 minutes)
 const apiCache = new Map();
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const CACHE_MAX_SIZE = 200;
 
 function getCachedResponse(key) {
   const item = apiCache.get(key);
@@ -65,18 +192,52 @@ function getCachedResponse(key) {
 }
 
 function setCachedResponse(key, data) {
-  if (apiCache.size > 200) {
+  if (apiCache.size > CACHE_MAX_SIZE) {
     const oldestKey = apiCache.keys().next().value;
     apiCache.delete(oldestKey);
   }
   apiCache.set(key, { data, timestamp: Date.now() });
 }
 
-// ==================== ADD THIS HEALTH ENDPOINT HERE ====================
+// Periodic cache cleanup — remove expired entries every 10 minutes to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [key, item] of apiCache) {
+    if (now - item.timestamp > CACHE_TTL_MS) {
+      apiCache.delete(key);
+      cleaned++;
+    }
+  }
+  // Also clean stale rate-limit entries (older than 5 minutes)
+  for (const [model, timestamp] of rateLimitedModelsCache) {
+    if (now - timestamp > 300000) {
+      rateLimitedModelsCache.delete(model);
+    }
+  }
+  // Clean stale model caches (older than 1 hour)
+  // userAvailableModelsCache doesn't have timestamps, but limit its size
+  if (userAvailableModelsCache.size > 50) {
+    const firstKey = userAvailableModelsCache.keys().next().value;
+    userAvailableModelsCache.delete(firstKey);
+  }
+  if (cleaned > 0) console.log(`🧹 Cache cleanup: removed ${cleaned} expired entries`);
+}, 10 * 60 * 1000);
+
+// Health check endpoint with MongoDB status
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'UP', message: 'Server is healthy' });
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  res.status(200).json({
+    status: 'UP',
+    message: 'Server is healthy',
+    uptime: Math.floor(process.uptime()),
+    database: dbStatus[dbState] || 'unknown',
+    memoryMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    cacheSize: apiCache.size,
+    timestamp: new Date().toISOString()
+  });
 });
-// =======================================================================
 
 // GET /api/today — Returns live IST date
 app.get('/api/today', (req, res) => {
@@ -134,13 +295,14 @@ async function fetchAvailableModels(apiKey) {
 
 // Helper function to call Google Gemini REST API directly with automatic model fallback
 async function callGeminiAPI(apiKey, prompt, systemInstruction = '', isJson = false, enableSearch = true) {
-  if (!apiKey) {
-    const err = new Error('No API key set. Please enter your Google Gemini API key to get started.');
+  const effectiveKey = apiKey || getApiKey();
+  if (!effectiveKey) {
+    const err = new Error('No API key found in backend folder. Please set GEMINI_API_KEY in the backend/.env file.');
     err.status = 400;
     throw err;
   }
 
-  const discoveredModels = await fetchAvailableModels(apiKey);
+  const discoveredModels = await fetchAvailableModels(effectiveKey);
   
   // Exclude models rate-limited in the last 2 minutes to decrease loading time
   const now = Date.now();
@@ -159,7 +321,7 @@ async function callGeminiAPI(apiKey, prompt, systemInstruction = '', isJson = fa
 
   for (const model of modelsToTry) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`;
 
       const payload = {
         contents: [{
@@ -185,20 +347,53 @@ async function callGeminiAPI(apiKey, prompt, systemInstruction = '', isJson = fa
         topK: 40
       };
 
-      let response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      // Abort controller for fetch timeout (60 seconds)
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 60000);
+
+      let response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+      } catch (fetchErr) {
+        clearTimeout(fetchTimeout);
+        if (fetchErr.name === 'AbortError') {
+          const timeoutErr = new Error(`Gemini API request timed out for model "${model}"`);
+          timeoutErr.status = 408;
+          lastError = timeoutErr;
+          continue;
+        }
+        throw fetchErr;
+      }
+      clearTimeout(fetchTimeout);
 
       // If Google Search tool is unsupported by a specific fallback model, retry without tools
       if (!response.ok && payload.tools) {
         delete payload.tools;
-        response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
+        const retryController = new AbortController();
+        const retryTimeout = setTimeout(() => retryController.abort(), 60000);
+        try {
+          response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: retryController.signal
+          });
+        } catch (fetchErr) {
+          clearTimeout(retryTimeout);
+          if (fetchErr.name === 'AbortError') {
+            const timeoutErr = new Error(`Gemini API retry timed out for model "${model}"`);
+            timeoutErr.status = 408;
+            lastError = timeoutErr;
+            continue;
+          }
+          throw fetchErr;
+        }
+        clearTimeout(retryTimeout);
       }
 
       if (!response.ok) {
@@ -296,7 +491,7 @@ OUTPUT FORMAT: Provide clean, semantic, well-structured HTML optimized for immed
 // POST /api/flow/:type
 app.post('/api/flow/:type', async (req, res) => {
   try {
-    const apiKey = req.headers['x-api-key'] || req.body._apiKey;
+    const apiKey = getApiKey(req);
     const type = req.params.type;
     const enableSearch = req.body.enableSearch !== undefined ? req.body.enableSearch : true;
 
@@ -370,7 +565,7 @@ Return a JSON object matching this schema:
 // POST /api/chat/:type
 app.post('/api/chat/:type', async (req, res) => {
   try {
-    const apiKey = req.headers['x-api-key'] || req.body._apiKey;
+    const apiKey = getApiKey(req);
     const type = req.params.type;
     const history = req.body.history || [];
 
@@ -415,19 +610,54 @@ app.get('*', (req, res) => {
   res.status(404).send('Not Found');
 });
 
-// Global Process Error Handlers to log crashes to terminal
+// Global Process Error Handlers to log crashes to terminal (NEVER crash the process)
 process.on('uncaughtException', (err) => {
   console.error('\n🔥 [CRITICAL UNCAUGHT EXCEPTION]:', err.message);
   console.error(err.stack);
+  // Don't exit — keep the server running
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('\n🔥 [UNHANDLED PROMISE REJECTION]:', reason);
+  // Don't exit — keep the server running
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+// Graceful shutdown handler for Render (sends SIGTERM on redeploy)
+let isShuttingDown = false;
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n🛑 ${signal} received. Shutting down gracefully...`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    // Close MongoDB connection
+    mongoose.connection.close(false).then(() => {
+      console.log('✅ MongoDB connection closed');
+      process.exit(0);
+    }).catch(() => {
+      process.exit(0);
+    });
+  });
+
+  // Force exit after 10 seconds if graceful shutdown hangs
+  setTimeout(() => {
+    console.error('⚠️ Forced shutdown after 10s timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n======================================================`);
   console.log(`🚀 CGL Prep Pro Server Live: http://localhost:${PORT}`);
   console.log(`📡 Full Terminal Logging Enabled (Requests & Errors)`);
   console.log(`======================================================\n`);
 });
+
+// Keep-alive settings to prevent premature connection drops
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
